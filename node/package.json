@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "start:thick": "bash scripts/start.sh",
+    "logs": "bash scripts/logs.sh",
     "dev": "node --watch src/server.js",
     "test": "jest",
     "lint": "eslint src test",

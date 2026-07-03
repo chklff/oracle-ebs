@@ -287,6 +287,43 @@ endpoints need none of this.
 
 ---
 
+## Logs & monitoring
+
+The service logs one **structured JSON line per event** to standard output. When
+started as `... > server.log`, that file holds everything: each request's
+method, path, **status code**, and duration, plus startup and error detail.
+Errors are logged in full server-side and never returned to the caller.
+
+JSON is great for tools but hard to read by eye — **do not just open the file in
+an editor.** Use the built-in reader instead (live, colored columns; Ctrl-C to
+stop):
+
+```bash
+npm run logs
+```
+
+```
+14:16:37 WARN  GET /orgs -> 401 (1ms)     <- call with no/invalid X-Client-Secret
+14:16:37 INFO  GET /orgs -> 200 (3ms)     <- call with the correct secret
+14:00:45 INFO  ebs-invoice-api listening
+```
+
+Other handy views (from the app directory):
+
+```bash
+# errors only, with the underlying message
+grep '"level":50' server.log | jq -r '.err.message'
+
+# last 30 raw lines
+tail -n 30 server.log
+```
+
+Log levels: `30` = INFO (normal), `40` = WARN (a 4xx such as `401`/`404`),
+`50` = ERROR (a `500`/DB failure, with full detail).
+
+> `server.log` grows unbounded. For production, run under **pm2**
+> (`pm2 logs`, with rotation) or systemd + journald instead of a plain file.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
