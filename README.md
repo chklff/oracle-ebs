@@ -32,12 +32,19 @@ and behavior — in two stacks so you can deploy whichever fits your environment
 
 | Directory | Stack | Status |
 |-----------|-------|--------|
-| [`node/`](./node) | Node.js + Express + `oracledb` (Thin mode) | ✅ Implemented |
-| `python/` | Flask + `oracledb` (Thin mode) | ⏳ Planned |
+| [`node/`](./node) | Node.js + Express + `oracledb` | ✅ Implemented & tested against live EBS 12.2 |
+| `python/` | Flask + `oracledb` | ⏳ Planned |
 | `docker/` | Dockerfiles / compose for both | ⏳ Planned |
 
-Both use the `oracledb` driver in **Thin mode**, so **no Oracle Instant Client
-installation is required**.
+Both use the `oracledb` driver. It runs in **Thin mode** by default (pure
+JavaScript, nothing to install). Databases that **enforce Oracle Native Network
+Encryption** — common in production EBS — additionally need **Thick mode**,
+which the service supports via a one-command download of the Oracle client into
+the app folder (no database change, no system install). The Node README walks
+through both.
+
+> **New here? Start with the [Node setup guide](./node/README.md)** — it is
+> written for admins with no prior Oracle knowledge.
 
 ## Repository layout
 
@@ -94,18 +101,20 @@ If you are new to EBS multi-org, see the explanation in
 
 ## Getting started
 
-Pick an implementation and follow its README. For Node:
+**Follow the step-by-step [Node setup guide](./node/README.md#setup--step-by-step).**
+The short version:
 
 ```bash
 cd node
-cp .env.example .env      # fill in DB credentials + client secret
 npm install
 npm test                  # runs against a mocked DB, no Oracle needed
-npm start
+cp .env.example .env      # then fill in DB credentials + client secret
+npm start                 # (or `npm run start:thick` if the DB enforces encryption)
 ```
 
 Before it can talk to a real instance, a DBA must create the service account
-using [`docs/db-grants.sql`](./docs/db-grants.sql) as a template.
+using [`docs/db-grants.sql`](./docs/db-grants.sql) as a template. The Node guide
+covers the encryption (Thin vs Thick) decision and troubleshooting in full.
 
 ## License
 
