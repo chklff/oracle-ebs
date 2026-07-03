@@ -1,7 +1,8 @@
-# Secrets / local config
+# Secrets / local config: ignore real env files, but always keep the templates
 .env
 *.env
 !.env.example
+!*.env.example
 
 # Project-manager working copy of the spec (canonical version is docs/tech-spec.md)
 /EBS-Invoice-API-Wrapper-TechSpec.md

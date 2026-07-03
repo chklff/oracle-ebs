@@ -80,6 +80,67 @@ supplier/operating-unit objects, insert on the interface tables, and execute on
 the concurrent-request packages. Object owners (`AP`, `APPS`, `HR`) vary by
 instance; verify them before running.
 
+## Configuring after installation
+
+Once the code is deployed on the host (for example under `/home/opc/rest-api`),
+configure it like this. The app reads everything from a `.env` file next to
+`package.json`; `.env` is never committed.
+
+1. **Create your `.env` from the template:**
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Generate and set the client secret** (the value callers send as
+   `X-Client-Secret`):
+
+   ```bash
+   openssl rand -hex 32        # copy the output into CLIENT_SECRET
+   ```
+
+3. **Set the database connection** using the low-privilege account created from
+   [`docs/db-grants.sql`](../docs/db-grants.sql):
+
+   ```dotenv
+   EBS_DB_USER=make_ap_svc
+   EBS_DB_PASSWORD=<the password the DBA set>
+   EBS_DB_CONNECT_STRING=<db-host>:1521/<db-service-name>
+   ```
+
+   `EBS_DB_CONNECT_STRING` is the **database** Easy Connect string
+   (`host:port/service_name`), not the EBS application URL. Ask your DBA for the
+   service name (e.g. `EBSPDB`, `PROD`). Thin mode connects straight over TCP —
+   no Oracle client install needed.
+
+4. **(Optional) Tune** pool size (`EBS_POOL_*`), paging limits
+   (`DEFAULT_QUERY_LIMIT`, `MAX_QUERY_LIMIT`), `HOST`/`PORT`, and `LOG_LEVEL`.
+   The defaults are fine for most deployments.
+
+5. **(Only if you enable `POST /invoices`)** fill in the import settings —
+   `EBS_IMPORT_SOURCE`, `EBS_IMPORT_PROGRAM_APP`/`_SHORT`, and the apps-context
+   IDs (`EBS_APPS_USER_ID`, `EBS_APPS_RESP_ID`, `EBS_APPS_RESP_APPL_ID`). These
+   are instance-specific; confirm them with your DBA. If you only expose the read
+   endpoints, leave these as-is.
+
+6. **Verify the config loads** and the DB is reachable:
+
+   ```bash
+   node -e "require('dotenv').config(); require('./src/config').loadConfig(); console.log('config OK')"
+   npm start &                 # then, from the same host:
+   curl -s http://127.0.0.1:3000/health
+   # -> {"status":"ok","db":"connected"}
+   ```
+
+   `"db":"error"` means the credentials or connect string are wrong, or the DB
+   host/port is not reachable from this machine.
+
+7. **Restart the service** after any `.env` change (env is read once at startup):
+
+   ```bash
+   pm2 restart ebs-invoice-api      # or: systemctl restart <your-unit>
+   ```
+
 ## Running
 
 Install dependencies:
