@@ -11,7 +11,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "jest",
-    "lint": "eslint src test"
+    "lint": "eslint src test",
+    "fetch-client": "bash scripts/fetch-instantclient.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

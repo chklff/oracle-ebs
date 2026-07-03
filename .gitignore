@@ -28,6 +28,10 @@ dist/
 build/
 *.log
 
+# Vendored Oracle Instant Client (downloaded at deploy time, never committed)
+vendor/instantclient/
+vendor/
+
 # Editor / OS
 .DS_Store
 .idea/

@@ -89,18 +89,39 @@ EBS_DB_THICK=true
 EBS_CLIENT_LIB_DIR=/usr/lib/oracle/<version>/client64/lib   # or leave blank to auto-detect
 ```
 
-Thick mode loads Oracle **Instant Client** (install once on the host running this
-service — not on the database) and negotiates NNE normally, so the DBA does not
+Thick mode loads Oracle **Instant Client** (needed only on the host running this
+service — never on the database) and negotiates NNE normally, so the DBA does not
 have to weaken transport security. Everything else — the API, queries, behavior
 — is identical. Leave `EBS_DB_THICK=false` (or unset) for instances that do not
 enforce NNE.
 
-Install Instant Client on Oracle Linux / RHEL:
+### Getting Instant Client (one command)
+
+No root and no system install required — the libraries are downloaded into the
+app's own `vendor/instantclient/` directory:
 
 ```bash
-sudo dnf install -y oracle-instantclient-basic
-# libraries land under /usr/lib/oracle/<version>/client64/lib
+npm run fetch-client
 ```
+
+Then set the two lines it prints in your `.env`:
+
+```dotenv
+EBS_DB_THICK=true
+EBS_CLIENT_LIB_DIR=/path/to/node/vendor/instantclient
+```
+
+The script supports Linux x64/arm64. On other platforms, download Instant Client
+"Basic Lite" from Oracle manually and point `EBS_CLIENT_LIB_DIR` at it.
+
+**Licensing:** Instant Client is free and, since 2021, redistributable under the
+Oracle Free Use Terms and Conditions — no fee, no account needed to download.
+We fetch it at deploy time rather than committing Oracle binaries to this repo,
+so the repository stays cleanly BSD-licensed. `vendor/` is gitignored.
+
+> On minimal Linux hosts Instant Client also needs the small `libaio` library
+> (`sudo dnf install -y libaio` / `apt-get install -y libaio1`); most server
+> images already have it.
 
 ## Database setup
 
