@@ -1,0 +1,28 @@
+{
+  "name": "ebs-invoice-api-node",
+  "version": "0.1.0",
+  "description": "Secure HTTP/JSON API wrapper over Oracle EBS Payables invoices (Node.js + Express + oracledb).",
+  "license": "BSD-3-Clause",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "jest",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "oracledb": "^6.5.1",
+    "pino": "^9.3.2",
+    "pino-http": "^10.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

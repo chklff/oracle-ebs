@@ -1,0 +1,60 @@
+'use strict';
+
+/**
+ * Centralised configuration, loaded once from the environment.
+ *
+ * Validation fails fast at startup so the service never boots half-configured.
+ * Everything is read from process.env by default, but loadConfig accepts an
+ * explicit env object to make it trivial to test.
+ */
+
+const REQUIRED = ['EBS_DB_USER', 'EBS_DB_PASSWORD', 'EBS_DB_CONNECT_STRING', 'CLIENT_SECRET'];
+
+function intOr(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function intOrUndefined(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function loadConfig(env = process.env) {
+  const missing = REQUIRED.filter((key) => !env[key] || String(env[key]).trim() === '');
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  return {
+    host: env.HOST || '127.0.0.1',
+    port: intOr(env.PORT, 3000),
+    logLevel: env.LOG_LEVEL || 'info',
+    clientSecret: env.CLIENT_SECRET,
+    db: {
+      user: env.EBS_DB_USER,
+      password: env.EBS_DB_PASSWORD,
+      connectString: env.EBS_DB_CONNECT_STRING,
+      poolMin: intOr(env.EBS_POOL_MIN, 1),
+      poolMax: intOr(env.EBS_POOL_MAX, 4),
+      poolIncrement: intOr(env.EBS_POOL_INCREMENT, 1),
+      poolTimeout: intOr(env.EBS_POOL_TIMEOUT, 60),
+      queueTimeout: intOr(env.EBS_QUEUE_TIMEOUT, 60000),
+    },
+    query: {
+      defaultLimit: intOr(env.DEFAULT_QUERY_LIMIT, 50),
+      maxLimit: intOr(env.MAX_QUERY_LIMIT, 500),
+    },
+    // Payables Open Interface Import settings (POST /invoices). See README.
+    import: {
+      programApplication: env.EBS_IMPORT_PROGRAM_APP || 'SQLAP',
+      programShortName: env.EBS_IMPORT_PROGRAM_SHORT || 'APXIIMPT',
+      source: env.EBS_IMPORT_SOURCE || 'MAKE_API',
+      appsUserId: intOrUndefined(env.EBS_APPS_USER_ID),
+      responsibilityId: intOrUndefined(env.EBS_APPS_RESP_ID),
+      responsibilityApplId: intOrUndefined(env.EBS_APPS_RESP_APPL_ID),
+    },
+  };
+}
+
+module.exports = { loadConfig, REQUIRED };
