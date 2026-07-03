@@ -23,10 +23,15 @@ arch="$(uname -m)"
 
 case "$os/$arch" in
   Linux/x86_64)
-    URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linux.x64.zip"
+    URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip"
     ;;
   Linux/aarch64)
-    URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linux.arm64.zip"
+    URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linux-arm64.zip"
+    ;;
+  MINGW*/*|MSYS*/*|CYGWIN*/*)
+    echo "On Windows, use the PowerShell script instead:" >&2
+    echo "  npm run fetch-client:win" >&2
+    exit 1
     ;;
   *)
     echo "Unsupported platform for this script: $os/$arch" >&2

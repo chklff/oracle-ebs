@@ -97,22 +97,50 @@ enforce NNE.
 
 ### Getting Instant Client (one command)
 
-No root and no system install required — the libraries are downloaded into the
-app's own `vendor/instantclient/` directory:
+No admin rights and no system install required — the libraries are downloaded
+into the app's own `vendor/instantclient/` directory:
+
+**Linux / macOS:**
 
 ```bash
 npm run fetch-client
+```
+
+**Windows:**
+
+```powershell
+npm run fetch-client:win
 ```
 
 Then set the two lines it prints in your `.env`:
 
 ```dotenv
 EBS_DB_THICK=true
-EBS_CLIENT_LIB_DIR=/path/to/node/vendor/instantclient
+EBS_CLIENT_LIB_DIR=/absolute/path/to/node/vendor/instantclient
 ```
 
-The script supports Linux x64/arm64. On other platforms, download Instant Client
-"Basic Lite" from Oracle manually and point `EBS_CLIENT_LIB_DIR` at it.
+The scripts support Linux (x64/arm64) and Windows (x64). On other platforms,
+download Instant Client "Basic Lite" from Oracle manually and point
+`EBS_CLIENT_LIB_DIR` at it.
+
+### Launching in Thick mode
+
+- **Linux / macOS:** the OS dynamic loader must find the vendored libraries, so
+  start via the provided launcher, which prepends `EBS_CLIENT_LIB_DIR` to
+  `LD_LIBRARY_PATH`:
+
+  ```bash
+  npm run start:thick
+  # or under a process manager:
+  #   pm2 start scripts/start.sh --name ebs-invoice-api
+  ```
+
+- **Windows:** no extra step — Thick mode loads the DLLs from
+  `EBS_CLIENT_LIB_DIR` directly, so `npm start` works. (Windows also needs the
+  Microsoft Visual C++ Redistributable, which most hosts already have.)
+
+Thin mode (the default) has no launch requirements on any platform — just
+`npm start`.
 
 **Licensing:** Instant Client is free and, since 2021, redistributable under the
 Oracle Free Use Terms and Conditions — no fee, no account needed to download.
