@@ -3,6 +3,9 @@
 *.env
 !.env.example
 
+# Project-manager working copy of the spec (canonical version is docs/tech-spec.md)
+/EBS-Invoice-API-Wrapper-TechSpec.md
+
 # Node
 node_modules/
 npm-debug.log*
