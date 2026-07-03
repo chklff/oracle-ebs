@@ -3,13 +3,19 @@
 require('dotenv').config();
 
 const { loadConfig } = require('./config');
+const { ensureClientLibraryPath } = require('./bootstrap');
+
+// Load and validate config first. If Thick mode needs the OS library path set,
+// re-exec with it before anything loads oracledb.
+const config = loadConfig();
+ensureClientLibraryPath(config);
+
 const { createLogger } = require('./logger');
 const db = require('./db');
 const { createApp } = require('./app');
 
 async function main() {
-  const config = loadConfig();
-  const logger = createLogger(config.logLevel);
+  const logger = createLogger(config.logLevel, config.logFormat);
 
   await db.initPool(config, logger);
   const app = createApp(config, logger);

@@ -30,6 +30,8 @@ function loadConfig(env = process.env) {
     host: env.HOST || '127.0.0.1',
     port: intOr(env.PORT, 3000),
     logLevel: env.LOG_LEVEL || 'info',
+    // 'pretty' (default) = human-readable lines; 'json' = machine-readable.
+    logFormat: /^json$/i.test(String(env.LOG_FORMAT || '').trim()) ? 'json' : 'pretty',
     clientSecret: env.CLIENT_SECRET,
     db: {
       user: env.EBS_DB_USER,

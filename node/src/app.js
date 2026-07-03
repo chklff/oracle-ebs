@@ -1,8 +1,8 @@
 'use strict';
 
 const express = require('express');
-const pinoHttp = require('pino-http');
 const { requireClientSecret } = require('./middleware/auth');
+const { requestLogger } = require('./middleware/requestLogger');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const healthRouter = require('./routes/health');
 const orgsRouter = require('./routes/orgs');
@@ -17,27 +17,14 @@ function createApp(config, logger) {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
 
-  // Structured request logging: method, path, status, duration. Secret redacted.
-  app.use(
-    pinoHttp({
-      logger,
-      redact: {
-        paths: ['req.headers["x-client-secret"]', 'req.headers.authorization'],
-        remove: true,
-      },
-      customLogLevel(_req, res, err) {
-        if (res.statusCode >= 500 || err) return 'error';
-        if (res.statusCode >= 400) return 'warn';
-        return 'info';
-      },
-    }),
-  );
+  // One tidy line per request: method, path, status, duration. No headers logged.
+  app.use(requestLogger(logger));
 
   // Health is unauthenticated and mounted before the secret gate.
   app.use('/', healthRouter(logger));
 
   // Everything below requires a valid X-Client-Secret.
-  app.use(requireClientSecret(config.clientSecret));
+  app.use(requireClientSecret(config.clientSecret, logger));
   app.use('/', orgsRouter());
   app.use('/', invoicesRouter(config));
 

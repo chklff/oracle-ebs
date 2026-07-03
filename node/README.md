@@ -146,20 +146,14 @@ never stored in this repository.)
 
 ### 7. Start the service
 
-**Thin mode** (any OS) or **Thick mode on Windows**:
-
 ```bash
 npm start
 ```
 
-**Thick mode on Linux / macOS** — use this launcher instead (it lets the system
-find the downloaded Oracle libraries):
-
-```bash
-npm run start:thick
-```
-
-The service listens on `127.0.0.1:3000` by default.
+That's it — on every OS and in both Thin and Thick mode. In Thick mode on
+Linux/macOS the app automatically re-launches itself with the correct library
+path, so you don't need any special command. The service listens on
+`127.0.0.1:3000` by default.
 
 ### 8. Verify it works
 
@@ -180,16 +174,18 @@ If `/health` shows `"db":"error"`, jump to [Troubleshooting](#troubleshooting).
 
 ### 9. Keep it running (production)
 
-Run it under a process manager so it restarts on reboot/crash. With
+Run it under a process manager so it restarts on reboot/crash, and so you can
+check status and logs with one command. With
 [pm2](https://pm2.keymetrics.io/):
 
 ```bash
-# Thin mode (or Windows Thick):
-pm2 start src/server.js --name ebs-invoice-api
-
-# Thick mode on Linux / macOS:
-pm2 start scripts/start.sh --name ebs-invoice-api
+pm2 start npm --name ebs-invoice-api -- start   # works in Thin or Thick mode
+pm2 save                                        # remember it across restarts
+pm2 startup                                      # (optional) start on boot — prints a sudo command to run
 ```
+
+Then: `pm2 status` (is it running?), `pm2 logs ebs-invoice-api` (live logs),
+`pm2 restart ebs-invoice-api` (after a `.env` change).
 
 Keep it bound to `127.0.0.1` and place it behind your firewall/reverse proxy.
 Do **not** expose it on `0.0.0.0` unless the network is already restricted.
@@ -289,40 +285,35 @@ endpoints need none of this.
 
 ## Logs & monitoring
 
-The service logs one **structured JSON line per event** to standard output. When
-started as `... > server.log`, that file holds everything: each request's
-method, path, **status code**, and duration, plus startup and error detail.
-Errors are logged in full server-side and never returned to the caller.
-
-JSON is great for tools but hard to read by eye — **do not just open the file in
-an editor.** Use the built-in reader instead (live, colored columns; Ctrl-C to
-stop):
+Logs are **human-readable by default** — one clean line per event. No tools or
+scripts needed: read the file, or follow it live.
 
 ```bash
-npm run logs
+tail -f server.log          # or, under pm2:  pm2 logs ebs-invoice-api
 ```
 
 ```
-14:16:37 WARN  GET /orgs -> 401 (1ms)     <- call with no/invalid X-Client-Secret
-14:16:37 INFO  GET /orgs -> 200 (3ms)     <- call with the correct secret
-14:00:45 INFO  ebs-invoice-api listening
+2026-07-03 14:16:37 WARN: auth failed: X-Client-Secret header not present
+2026-07-03 14:16:37 WARN: GET /orgs 401 1ms          <- call missing/invalid secret
+2026-07-03 14:16:37 INFO: GET /orgs 200 3ms          <- call with the correct secret
+2026-07-03 14:00:45 INFO: ebs-invoice-api listening
 ```
 
-Other handy views (from the app directory):
+Each request logs method, path, **status**, and duration. **Headers are never
+logged**, so the client secret cannot leak. Errors are logged in full
+server-side and never returned to the caller.
 
-```bash
-# errors only, with the underlying message
-grep '"level":50' server.log | jq -r '.err.message'
+**Diagnosing 401s:** a failed auth logs *why* — either
+`X-Client-Secret header not present` (caller sent no header) or `present but did
+not match` with `receivedLength` vs `expectedLength`, so you can spot an empty or
+truncated value. The secret value itself is never logged.
 
-# last 30 raw lines
-tail -n 30 server.log
-```
+**Format:** default `pretty` is the readable form above; set `LOG_FORMAT=json`
+in `.env` for raw JSON lines (for log shippers/aggregators). Colors are added
+only on a real terminal, so a redirected `server.log` stays clean text.
 
-Log levels: `30` = INFO (normal), `40` = WARN (a 4xx such as `401`/`404`),
-`50` = ERROR (a `500`/DB failure, with full detail).
-
-> `server.log` grows unbounded. For production, run under **pm2**
-> (`pm2 logs`, with rotation) or systemd + journald instead of a plain file.
+> `server.log` grows unbounded when you redirect to a file. For production, run
+> under **pm2** (`pm2 logs`, with rotation) or systemd + journald.
 
 ## Troubleshooting
 
@@ -330,7 +321,7 @@ Log levels: `30` = INFO (normal), `40` = WARN (a 4xx such as `401`/`404`),
 |---------|-------|-----|
 | `/health` returns `"db":"error"` | Wrong DB credentials/connect string, or DB not reachable | Recheck `EBS_DB_*`; confirm host/port/service with DBA; ensure network path to the DB |
 | Startup error `ORA-12660` / `NJS-533` (encryption) | The DB **requires** Native Network Encryption; Thin mode can't do it | Enable **Thick mode** — step 6 |
-| Startup error `DPI-1047 … libnnz.so` (Linux) | Thick mode on, but the OS can't find the client libraries | Start with `npm run start:thick` (not plain `npm start`); it sets the library path |
+| Startup error `DPI-1047 … libnnz.so` (Linux) | Thick mode on, but the client libraries aren't where configured | Check `EBS_CLIENT_LIB_DIR` points to the folder from `npm run fetch-client` (an **absolute** path); re-run the fetch if missing. (`npm start` sets the library path automatically.) |
 | Startup error `DPI-1047 … cannot locate Oracle Client` (Windows) | Client libs missing or VC++ runtime absent | Re-run `npm run fetch-client:win`, check `EBS_CLIENT_LIB_DIR`, install the Microsoft Visual C++ Redistributable |
 | `401 Unauthorized` | Missing/wrong `X-Client-Secret` | Send the header matching `CLIENT_SECRET` in `.env` |
 | `400 org_id is required` | Listing/creating without an operating unit | Add `?org_id=<n>` (get valid values from `GET /orgs`) |

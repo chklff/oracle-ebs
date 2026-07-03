@@ -14,11 +14,30 @@ function timingSafeEqual(a, b) {
 /**
  * Reject any request whose X-Client-Secret header does not match the configured
  * secret. Mount this after the (unauthenticated) health route.
+ *
+ * On failure it logs WHY — header missing, or present-but-wrong with the length
+ * received vs expected — so integration issues (e.g. an empty template value)
+ * are easy to diagnose. The secret VALUE is never logged.
  */
-function requireClientSecret(expectedSecret) {
+function requireClientSecret(expectedSecret, logger) {
   return (req, _res, next) => {
     const provided = req.get('X-Client-Secret');
-    if (!provided || !timingSafeEqual(provided, expectedSecret)) {
+    if (!provided) {
+      if (logger) {
+        logger.warn(
+          { auth: 'missing_header', header: 'X-Client-Secret' },
+          'auth failed: X-Client-Secret header not present',
+        );
+      }
+      return next(unauthorized());
+    }
+    if (!timingSafeEqual(provided, expectedSecret)) {
+      if (logger) {
+        logger.warn(
+          { auth: 'mismatch', receivedLength: provided.length, expectedLength: String(expectedSecret).length },
+          'auth failed: X-Client-Secret present but did not match',
+        );
+      }
       return next(unauthorized());
     }
     return next();

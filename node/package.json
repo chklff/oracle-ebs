@@ -10,7 +10,6 @@
   "scripts": {
     "start": "node src/server.js",
     "start:thick": "bash scripts/start.sh",
-    "logs": "bash scripts/logs.sh",
     "dev": "node --watch src/server.js",
     "test": "jest",
     "lint": "eslint src test",
@@ -22,7 +21,7 @@
     "express": "^4.19.2",
     "oracledb": "^6.5.1",
     "pino": "^9.3.2",
-    "pino-http": "^10.2.0"
+    "pino-pretty": "^11.2.2"
   },
   "devDependencies": {
     "eslint": "^8.57.0",
