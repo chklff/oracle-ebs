@@ -106,12 +106,15 @@ async function getInvoiceById(conn, invoiceId) {
   return mapInvoice(result.rows[0]);
 }
 
+// On ap_invoice_lines_all the account code combination is default_dist_ccid;
+// dist_code_combination_id only exists at the distribution level. We expose it
+// under the stable output name dist_code_combination_id.
 const GET_INVOICE_LINES = `
   SELECT line_number               AS line_number,
          line_type_lookup_code     AS line_type,
          amount                    AS amount,
          description               AS description,
-         dist_code_combination_id  AS dist_code_combination_id
+         default_dist_ccid         AS dist_code_combination_id
     FROM ap_invoice_lines_all
    WHERE invoice_id = :invoice_id
    ORDER BY line_number`;
