@@ -8,6 +8,33 @@ oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
 oracledb.fetchAsString = [oracledb.CLOB];
 
 let pool = null;
+let thickInitialised = false;
+
+/**
+ * Enable Thick mode when configured. Required for databases that enforce Oracle
+ * Native Network Encryption (Thin mode cannot negotiate it). Loads Oracle
+ * Instant Client from clientLibDir, or the default search path if unset. Called
+ * once, before any connection is created.
+ */
+function enableThickModeIfConfigured(config, logger) {
+  if (!config.db.thick || thickInitialised) return;
+  try {
+    oracledb.initOracleClient(config.db.clientLibDir ? { libDir: config.db.clientLibDir } : {});
+    thickInitialised = true;
+    if (logger) {
+      logger.info(
+        { mode: 'thick', libDir: config.db.clientLibDir || '(default search path)' },
+        'oracledb thick mode enabled',
+      );
+    }
+  } catch (err) {
+    throw new Error(
+      'Failed to enable oracledb Thick mode (EBS_DB_THICK=true). Ensure Oracle '
+        + 'Instant Client is installed and, if needed, EBS_CLIENT_LIB_DIR points '
+        + `to its lib directory. Original error: ${err.message}`,
+    );
+  }
+}
 
 /**
  * Create the shared connection pool. Idempotent: repeated calls return the
@@ -15,6 +42,7 @@ let pool = null;
  */
 async function initPool(config, logger) {
   if (pool) return pool;
+  enableThickModeIfConfigured(config, logger);
   pool = await oracledb.createPool({
     user: config.db.user,
     password: config.db.password,

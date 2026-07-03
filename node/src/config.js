@@ -35,6 +35,14 @@ function loadConfig(env = process.env) {
       user: env.EBS_DB_USER,
       password: env.EBS_DB_PASSWORD,
       connectString: env.EBS_DB_CONNECT_STRING,
+      // Thin mode by default. Set EBS_DB_THICK=true for instances that enforce
+      // Oracle Native Network Encryption (ORA-12660), which Thin cannot do.
+      // Thick mode loads Oracle Instant Client from EBS_CLIENT_LIB_DIR (or the
+      // default library search path if unset).
+      thick: /^(true|1|yes)$/i.test(String(env.EBS_DB_THICK || '').trim()),
+      clientLibDir: env.EBS_CLIENT_LIB_DIR && env.EBS_CLIENT_LIB_DIR.trim() !== ''
+        ? env.EBS_CLIENT_LIB_DIR.trim()
+        : undefined,
       poolMin: intOr(env.EBS_POOL_MIN, 1),
       poolMax: intOr(env.EBS_POOL_MAX, 4),
       poolIncrement: intOr(env.EBS_POOL_INCREMENT, 1),

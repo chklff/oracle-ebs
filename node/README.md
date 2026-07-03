@@ -55,6 +55,8 @@ Copy `.env.example` to `.env` and fill it in. `.env` is gitignored.
 | `EBS_DB_USER` | ✅ | — | Service DB user (e.g. `make_ap_svc`) |
 | `EBS_DB_PASSWORD` | ✅ | — | Service DB password |
 | `EBS_DB_CONNECT_STRING` | ✅ | — | Easy Connect `host:port/service` |
+| `EBS_DB_THICK` | | `false` | `true` to use Thick mode (see below) |
+| `EBS_CLIENT_LIB_DIR` | | — | Instant Client lib dir for Thick mode |
 | `HOST` | | `127.0.0.1` | Bind address (keep on loopback) |
 | `PORT` | | `3000` | Listen port |
 | `LOG_LEVEL` | | `info` | pino level (`info`, `debug`, `silent`, …) |
@@ -71,6 +73,34 @@ Copy `.env.example` to `.env` and fill it in. `.env` is gitignored.
 | `EBS_APPS_USER_ID` | POST only | — | User id for `FND_GLOBAL.APPS_INITIALIZE` |
 | `EBS_APPS_RESP_ID` | POST only | — | Responsibility id for apps init |
 | `EBS_APPS_RESP_APPL_ID` | POST only | — | Responsibility application id |
+
+## Thin vs Thick mode (Native Network Encryption)
+
+By default the driver runs in **Thin mode** — pure JavaScript, no Oracle client
+install. Thin mode **cannot negotiate Oracle Native Network Encryption (NNE)**;
+against a database that *enforces* it, connections fail with `ORA-12660` /
+`NJS-533`.
+
+Many hardened production EBS instances enforce NNE. To support them without any
+database-side change, set:
+
+```dotenv
+EBS_DB_THICK=true
+EBS_CLIENT_LIB_DIR=/usr/lib/oracle/<version>/client64/lib   # or leave blank to auto-detect
+```
+
+Thick mode loads Oracle **Instant Client** (install once on the host running this
+service — not on the database) and negotiates NNE normally, so the DBA does not
+have to weaken transport security. Everything else — the API, queries, behavior
+— is identical. Leave `EBS_DB_THICK=false` (or unset) for instances that do not
+enforce NNE.
+
+Install Instant Client on Oracle Linux / RHEL:
+
+```bash
+sudo dnf install -y oracle-instantclient-basic
+# libraries land under /usr/lib/oracle/<version>/client64/lib
+```
 
 ## Database setup
 
