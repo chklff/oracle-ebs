@@ -18,6 +18,7 @@ const CORE_COLUMNS = `
   i.invoice_currency_code              AS currency_code,
   TO_CHAR(i.gl_date, 'YYYY-MM-DD')     AS gl_date,
   i.payment_status_flag                AS payment_status_flag,
+  i.invoice_type_lookup_code           AS invoice_type,
   i.org_id                             AS org_id,
   i.attribute_category                 AS attribute_category,
   i.attribute1, i.attribute2, i.attribute3, i.attribute4, i.attribute5,
@@ -39,6 +40,7 @@ function mapInvoice(row) {
     currency_code: row.CURRENCY_CODE,
     gl_date: row.GL_DATE,
     payment_status_flag: row.PAYMENT_STATUS_FLAG,
+    invoice_type: row.INVOICE_TYPE,
     org_id: row.ORG_ID,
     custom_fields: customFields,
   };
@@ -131,14 +133,14 @@ const INSERT_HEADER = `
   INSERT INTO ap_invoices_interface (
     invoice_id, invoice_num, invoice_date, vendor_id, vendor_site_id,
     invoice_amount, invoice_currency_code, terms_id, description,
-    org_id, source, attribute_category,
+    invoice_type_lookup_code, org_id, source, attribute_category,
     attribute1, attribute2, attribute3, attribute4, attribute5,
     attribute6, attribute7, attribute8, attribute9, attribute10,
     attribute11, attribute12, attribute13, attribute14, attribute15
   ) VALUES (
     ap_invoices_interface_s.NEXTVAL, :invoice_num, TO_DATE(:invoice_date, 'YYYY-MM-DD'), :vendor_id, :vendor_site_id,
     :invoice_amount, :currency_code, :terms_id, :description,
-    :org_id, :source, :attribute_category,
+    :invoice_type, :org_id, :source, :attribute_category,
     :attribute1, :attribute2, :attribute3, :attribute4, :attribute5,
     :attribute6, :attribute7, :attribute8, :attribute9, :attribute10,
     :attribute11, :attribute12, :attribute13, :attribute14, :attribute15
@@ -177,6 +179,7 @@ async function createInvoiceInterface(conn, payload, importSource) {
     currency_code: payload.currency_code,
     terms_id: payload.terms_id ?? null,
     description: payload.description ?? null,
+    invoice_type: payload.invoice_type ?? 'STANDARD',
     org_id: payload.org_id,
     source: importSource,
     ...attributeBinds(payload.custom_fields),

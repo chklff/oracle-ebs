@@ -153,6 +153,28 @@ describe('POST /invoices', () => {
     expect(res.body).toEqual({ status: 'submitted', request_id: 8675309, interface_invoice_id: 777 });
     expect(mockExecute).toHaveBeenCalledTimes(3);
   });
+
+  test('defaults invoice_type to STANDARD and passes through an explicit one', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ outBinds: { out_invoice_id: [777] } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ outBinds: { request_id: 8675309 } });
+    await request(app).post('/invoices').set(AUTH_HEADER).send(validBody).expect(202);
+    const [, headerBindsDefault] = mockExecute.mock.calls.at(-3);
+    expect(headerBindsDefault).toEqual(expect.objectContaining({ invoice_type: 'STANDARD' }));
+
+    mockExecute
+      .mockResolvedValueOnce({ outBinds: { out_invoice_id: [778] } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ outBinds: { request_id: 8675310 } });
+    await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({ ...validBody, invoice_type: 'PAYMENT REQUEST' })
+      .expect(202);
+    const [, headerBindsExplicit] = mockExecute.mock.calls.at(-3);
+    expect(headerBindsExplicit).toEqual(expect.objectContaining({ invoice_type: 'PAYMENT REQUEST' }));
+  });
 });
 
 describe('GET /invoices/import-status/:request_id', () => {

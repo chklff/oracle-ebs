@@ -63,6 +63,11 @@ function validateCreatePayload(body) {
     invoice_amount: invoiceAmount,
     currency_code: String(body.currency_code),
     terms_id: body.terms_id !== undefined && body.terms_id !== null ? Number(body.terms_id) : null,
+    // Not validated against a hardcoded enum - same approach as currency_code.
+    // Oracle's own AP_LOOKUP_CODES (lookup_type 'INVOICE TYPE') is the source
+    // of truth and rejects an invalid value during import; hardcoding a list
+    // here would just be another thing to keep in sync per instance.
+    invoice_type: body.invoice_type !== undefined && body.invoice_type !== null ? String(body.invoice_type) : 'STANDARD',
     description: body.description ?? null,
     custom_fields: body.custom_fields && typeof body.custom_fields === 'object' ? body.custom_fields : {},
     lines: body.lines.map((line) => ({

@@ -221,6 +221,7 @@ curl "$BASE_URL/invoices?org_id=101&date_from=2026-06-01&limit=50" \
       "currency_code": "USD",
       "gl_date": "2026-06-05",
       "payment_status_flag": "N",
+      "invoice_type": "STANDARD",
       "org_id": 101,
       "custom_fields": {
         "attribute_category": null,
@@ -317,6 +318,7 @@ curl $BASE_URL/invoices/12345 \
   "currency_code": "USD",
   "gl_date": "2026-06-05",
   "payment_status_flag": "N",
+  "invoice_type": "STANDARD",
   "org_id": 101,
   "custom_fields": { "attribute_category": null, "attribute1": "PO-42" },
   "lines": [
@@ -357,6 +359,24 @@ synchronously. You get back a `request_id` to poll.
 | `description` | no | nullable |
 | `custom_fields.*` (attribute1-15, attribute_category) | no | nullable |
 | `lines[].line_type` | no | defaults to `ITEM` |
+| `invoice_type` | no | defaults to `STANDARD`. See below - **not** every value works with just `vendor_id`/`vendor_site_id` |
+
+**`invoice_type`** maps to `invoice_type_lookup_code`, not validated against a
+hardcoded enum here (same approach as `currency_code` - Oracle's own
+`AP_LOOKUP_CODES`, lookup_type `INVOICE TYPE`, is the source of truth).
+Verified working with normal `vendor_id`/`vendor_site_id`: `STANDARD`
+(default) and `CREDIT`; `DEBIT`/`MIXED`/`PREPAYMENT`/etc. are presumed to work
+the same way but untested.
+
+**`PAYMENT REQUEST` does *not* work with this endpoint as-is.** Tested against
+a live instance: submitting one with a normal `vendor_id`/`vendor_site_id`
+gets silently ignored by the import - not rejected, just never picked up
+(`request_id` on the interface row stays `null` forever). Real `PAYMENT
+REQUEST` invoices on the reference instance use sentinel values
+`vendor_id = -222`, `vendor_site_id = -222`, plus a genuine `party_id`
+(a Trading Community Architecture party, not a regular supplier) - a
+structurally different creation path this API doesn't support yet. Treat this
+as a separate, unbuilt feature, not a quick fix.
 
 This field list is safe to keep identical across different EBS customers/
 instances — it's a thin pass-through to Oracle's seeded
