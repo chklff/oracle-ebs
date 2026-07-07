@@ -79,6 +79,16 @@ function validateCreatePayload(body) {
           ? Number(line.dist_code_combination_id)
           : null,
       account: line.account ?? null,
+      // Only relevant for line_type "TAX" - this instance uses Oracle's
+      // e-Business Tax engine, not legacy tax codes, so a tax line is
+      // identified by regime/status/rate (or classification code), not a
+      // single flat "tax code" string. Verified live against a real tax
+      // line's shape; unrelated to line_type "ITEM" etc.
+      tax_regime_code: line.tax_regime_code ?? null,
+      tax_status_code: line.tax_status_code ?? null,
+      tax_rate_code: line.tax_rate_code ?? null,
+      tax_jurisdiction_code: line.tax_jurisdiction_code ?? null,
+      tax_classification_code: line.tax_classification_code ?? null,
     })),
   };
 }

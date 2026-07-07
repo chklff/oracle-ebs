@@ -146,13 +146,23 @@ const INSERT_HEADER = `
     :attribute11, :attribute12, :attribute13, :attribute14, :attribute15
   ) RETURNING invoice_id INTO :out_invoice_id`;
 
+// tax_regime_code/tax_status_code/tax_rate_code/tax_jurisdiction_code/
+// tax_classification_code are only meaningful on a "TAX" line type - this
+// instance uses Oracle's e-Business Tax engine, not a legacy flat tax code,
+// and rejects a tax line with ZX_TAX_RATE_ID_CODE_MISSING if
+// tax_jurisdiction_code is left out (rates vary by jurisdiction even for the
+// same regime/status/rate code) - verified live.
 const INSERT_LINE = `
   INSERT INTO ap_invoice_lines_interface (
     invoice_id, invoice_line_id, line_number, line_type_lookup_code,
-    amount, description, dist_code_combination_id, dist_code_concatenated
+    amount, description, dist_code_combination_id, dist_code_concatenated,
+    tax_regime_code, tax_status_code, tax_rate_code, tax_jurisdiction_code,
+    tax_classification_code
   ) VALUES (
     :invoice_id, ap_invoice_lines_interface_s.NEXTVAL, :line_number, :line_type,
-    :amount, :description, :dist_code_combination_id, :dist_code_concatenated
+    :amount, :description, :dist_code_combination_id, :dist_code_concatenated,
+    :tax_regime_code, :tax_status_code, :tax_rate_code, :tax_jurisdiction_code,
+    :tax_classification_code
   )`;
 
 function attributeBinds(customFields = {}) {
@@ -202,6 +212,11 @@ async function createInvoiceInterface(conn, payload, importSource) {
         description: line.description ?? null,
         dist_code_combination_id: line.dist_code_combination_id ?? null,
         dist_code_concatenated: line.account ?? null,
+        tax_regime_code: line.tax_regime_code ?? null,
+        tax_status_code: line.tax_status_code ?? null,
+        tax_rate_code: line.tax_rate_code ?? null,
+        tax_jurisdiction_code: line.tax_jurisdiction_code ?? null,
+        tax_classification_code: line.tax_classification_code ?? null,
       },
       { autoCommit: false },
     );

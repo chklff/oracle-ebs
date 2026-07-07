@@ -358,7 +358,8 @@ synchronously. You get back a `request_id` to poll.
 | `terms_id` | no | nullable |
 | `description` | no | nullable |
 | `custom_fields.*` (attribute1-15, attribute_category) | no | nullable |
-| `lines[].line_type` | no | defaults to `ITEM` |
+| `lines[].line_type` | no | defaults to `ITEM`. `TAX` exists structurally but see the unresolved gap below before relying on it |
+| `lines[].tax_regime_code`, `lines[].tax_status_code`, `lines[].tax_rate_code`, `lines[].tax_jurisdiction_code`, `lines[].tax_classification_code` | no | Only meaningful on a `TAX` line (e-Business Tax engine) - see the unresolved gap below |
 | `invoice_type` | no | defaults to `STANDARD`. See below - **not** every value works with just `vendor_id`/`vendor_site_id` |
 
 **`invoice_type`** maps to `invoice_type_lookup_code`, not validated against a
@@ -467,6 +468,36 @@ found while integration-testing against a live Vision demo instance:
 whitespace - `" FOO "` staged can land as `" FOO"` in `ap_invoices_all`, an
 inconsistency this API works around internally (see the next section) but
 that's worth knowing if you're ever comparing invoice numbers yourself.
+
+**`TAX`-type lines are an unresolved gap - don't rely on them yet.** This
+instance uses Oracle's modern e-Business Tax engine (`tax_regime_code`/
+`tax_status_code`/`tax_rate_code`/`tax_jurisdiction_code`, not a legacy flat
+tax code), and three different approaches were tried against a live invoice
+and all failed:
+1. A manual `TAX` line with regime/status/rate but no jurisdiction →
+   `ZX_TAX_RATE_ID_CODE_MISSING` (rates vary by jurisdiction, so this one's
+   expected).
+2. The exact same manual `TAX` line, but with jurisdiction/rate/effective-date
+   values copied directly from a real, already-succeeded tax line on this org
+   → the *same* `ZX_TAX_RATE_ID_CODE_MISSING` error, for a reason not
+   identified.
+3. `CALC_TAX_DURING_IMPORT_FLAG = 'Y'` on the header with a
+   `tax_classification_code` on the `ITEM` line instead (letting Oracle's tax
+   engine auto-derive and create the tax line itself, which is how the real
+   line's populated `SUMMARY_TAX_LINE_ID` suggests it was actually created) →
+   rejected with **no reason logged at all** in `AP_INTERFACE_REJECTIONS`,
+   meaning the failure happens below what's visible through data alone.
+
+Diagnosing further needs either the concurrent request's own log file
+(permission-denied for the service account used here) or EBS Tax Manager
+functional expertise on this instance's Tax Determination rules/Configuration
+Owner Tax Options/Party Tax Profiles - none of which are discoverable through
+SQL alone. **Recommended workaround:** if the tax amount is already known
+(not something Oracle needs to calculate/validate), book it as a normal
+GL-coded line - `line_type: "ITEM"` (or a dedicated type your Chart of
+Accounts uses for tax liability) pointed at the tax-payable account via
+`dist_code_combination_id`/`account` - rather than using `line_type: "TAX"`
+at all. This sidesteps the e-Business Tax engine entirely.
 
 **A `request_id` can span far more than the one invoice you just staged.**
 Oracle's import run sweeps *every* still-eligible pending/rejected interface
