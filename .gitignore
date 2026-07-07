@@ -7,6 +7,9 @@
 # Project-manager working copy of the spec (canonical version is docs/tech-spec.md)
 /EBS-Invoice-API-Wrapper-TechSpec.md
 
+# Local planning notes, not for the repo
+*.local.md
+
 # Node
 node_modules/
 npm-debug.log*

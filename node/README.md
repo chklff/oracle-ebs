@@ -153,9 +153,16 @@ npm start
 That's it — on every OS and in both Thin and Thick mode. In Thick mode on
 Linux/macOS the app automatically re-launches itself with the correct library
 path, so you don't need any special command. The service listens on
-`127.0.0.1:3000` by default.
+`127.0.0.1:3000` by default (controlled by `HOST`/`PORT` in `.env`) — that's
+just the bind address on the machine running the process, not necessarily
+where external callers reach it (there's often an SSH tunnel, reverse proxy,
+or load balancer in front, with its own hostname/port). See
+[`docs/api.md`](../docs/api.md) for the `$BASE_URL` convention used in the
+full API reference.
 
 ### 8. Verify it works
+
+Run these on the same machine you just started the service on:
 
 ```bash
 # 1) Is it alive and connected to the DB? (no secret needed)
@@ -201,10 +208,15 @@ Do **not** expose it on `0.0.0.0` unless the network is already restricted.
 |---------------|------|--------------|
 | `GET /health` | none | Liveness + database connectivity |
 | `GET /orgs` | secret | List operating units (to discover valid `org_id`) |
+| `GET /vendors?org_id=…` | secret | List suppliers usable in an operating unit (to discover valid `vendor_id`) |
+| `GET /vendor-sites?org_id=…&vendor_id=…` | secret | List a supplier's sites (to discover valid `vendor_site_id`, required by `POST /invoices`) |
+| `GET /terms` | secret | List payment terms (to discover valid `terms_id`) |
+| `GET /currencies` | secret | List enabled currencies (to discover valid `currency_code`) |
 | `GET /invoices?org_id=…` | secret | Paginated invoice list for one operating unit |
 | `GET /invoices/:id` | secret | One invoice + its lines |
+| `GET /invoices/dff-schema` | secret | Column → label metadata for `custom_fields` (attribute1-15), per context |
 | `POST /invoices` | secret | Stage an invoice + launch the import job |
-| `GET /invoices/import-status/:request_id` | secret | Poll the import job |
+| `GET /invoices/import-status/:request_id?interface_invoice_id=` | secret | Poll the import job — pass `interface_invoice_id` for an unambiguous result |
 
 Full request/response examples for every endpoint are in
 **[`docs/api.md`](../docs/api.md)**.
@@ -240,12 +252,21 @@ Everything is set in `.env`. Only the first four are required.
 | `EBS_QUEUE_TIMEOUT` | | `60000` | ms to wait for a free connection |
 | `DEFAULT_QUERY_LIMIT` | | `50` | Default page size for `GET /invoices` |
 | `MAX_QUERY_LIMIT` | | `500` | Maximum allowed page size |
-| `EBS_IMPORT_SOURCE` | POST only | `MAKE_API` | Payables `Source` value the import filters on |
+| `EBS_IMPORT_SOURCE` | POST only\* | `MAKE_API` | Payables `Source` value the import filters on — **must already be registered** in `AP_LOOKUP_CODES` (lookup_type `SOURCE`) on the target instance. The default, `MAKE_API`, is not registered anywhere out of the box; either register it (see below) or point this at an existing value like `MANUAL INVOICE ENTRY` |
+| `EBS_IMPORT_BATCH_NAME` | POST only | `N/A` | Payables `Batch Name` SRS parameter — required by the concurrent program even when invoice batch controls are off. `N/A` is the value Oracle Forms itself resolves to by default; only change this if `AP_USE_INV_BATCH_CONTROLS` is `Y` on your instance |
 | `EBS_IMPORT_PROGRAM_APP` | POST only | `SQLAP` | Concurrent program application short name |
 | `EBS_IMPORT_PROGRAM_SHORT` | POST only | `APXIIMPT` | Import program short name |
-| `EBS_APPS_USER_ID` | POST only | — | User id for `FND_GLOBAL.APPS_INITIALIZE` |
-| `EBS_APPS_RESP_ID` | POST only | — | Responsibility id for apps init |
-| `EBS_APPS_RESP_APPL_ID` | POST only | — | Responsibility application id |
+| `EBS_APPS_USER_ID` | POST only\* | — | User id for `FND_GLOBAL.APPS_INITIALIZE` |
+| `EBS_APPS_RESP_ID` | POST only\* | — | Responsibility id for apps init |
+| `EBS_APPS_RESP_APPL_ID` | POST only\* | — | Responsibility application id |
+
+\* Marked "POST only" but not actually optional if you use POST: leaving
+`EBS_APPS_USER_ID`/`EBS_APPS_RESP_ID`/`EBS_APPS_RESP_APPL_ID` unset does **not**
+fail startup or the request — `FND_GLOBAL.APPS_INITIALIZE(NULL, NULL, NULL)`
+runs "successfully" but `FND_REQUEST.SUBMIT_REQUEST` then silently fails and
+returns `request_id: 0`, while the API still responds `202 submitted`. Always
+confirm a POST actually returned a real (non-zero) `request_id` when setting
+this up for a new instance.
 
 ---
 
@@ -257,16 +278,46 @@ itself imports invoices:
 1. It inserts the header + lines into EBS's standard interface tables
    (`ap_invoices_interface`, `ap_invoice_lines_interface`) with the `org_id` set.
 2. It launches the **Payables Open Interface Import** concurrent program and
-   returns a `request_id`.
-3. You poll `GET /invoices/import-status/:request_id` until `phase` is
-   `Completed`. `status` `Normal` = success; `Error`/`Warning` = EBS rejected or
-   flagged rows (review them in Payables).
+   returns `{ request_id, interface_invoice_id }`.
+3. You poll `GET /invoices/import-status/:request_id?interface_invoice_id=`
+   (pass both) until `phase` is `Completed`, then check `interface_status`:
+   `PROCESSED` = success (`invoice_id` is the real invoice), `REJECTED` =
+   check `rejection_reasons`.
+
+**Always pass `interface_invoice_id`.** Oracle's import run sweeps *every*
+pending/rejected interface row for that org+source together, not just the one
+you just staged - `request_id` by itself can span old, unrelated backlog rows
+too. Without `interface_invoice_id`, the status endpoint only reports an
+outcome when it can do so unambiguously, which silently gives you less
+information rather than a wrong answer.
 
 **Before enabling POST, confirm these instance-specific values with your DBA**
 and put them in `.env`: the `Source` lookup value (`EBS_IMPORT_SOURCE`), the
 import program identifiers, and the apps-context IDs
 (`EBS_APPS_USER_ID`, `EBS_APPS_RESP_ID`, `EBS_APPS_RESP_APPL_ID`). The **read**
 endpoints need none of this.
+
+You'll also need a valid `vendor_site_id` per invoice — Payables rejects any
+invoice with no resolvable supplier site. Look one up with `GET /vendors` then
+`GET /vendor-sites?org_id=&vendor_id=` rather than guessing a number.
+
+**Registering a custom `Source` value.** If you want invoices tagged with your
+own source name (e.g. `MAKE_API`) instead of reusing an existing one like
+`MANUAL INVOICE ENTRY`, that name has to be added to `AP_LOOKUP_CODES`
+(lookup_type `SOURCE`) first — this is normal, expected EBS setup for any
+external system integrating with Payables, not a code change. Don't `INSERT`
+into that table directly: it's a translated view over `FND_LOOKUP_VALUES`
+(multi-org/multi-language), and a naive insert fails on `NOT NULL` columns
+like `LANGUAGE` that the view hides. Use Oracle's supported API,
+`FND_LOOKUP_VALUES_PKG.LOAD_ROW`, or add it through the Lookups setup screen
+under Application Developer.
+
+**GL period gotcha.** Even with everything above correct, an invoice still
+gets rejected (`ACCT DATE NOT IN OPEN PD`) if `invoice_date` falls in a GL
+period that isn't open for that org's ledger. This is pure EBS data/setup
+state — periods are opened manually, month by month — and has nothing to do
+with this API. If every invoice you submit fails the same way, check open
+periods before assuming something here is broken.
 
 ---
 
@@ -325,6 +376,9 @@ only on a real terminal, so a redirected `server.log` stays clean text.
 | Startup error `DPI-1047 … cannot locate Oracle Client` (Windows) | Client libs missing or VC++ runtime absent | Re-run `npm run fetch-client:win`, check `EBS_CLIENT_LIB_DIR`, install the Microsoft Visual C++ Redistributable |
 | `401 Unauthorized` | Missing/wrong `X-Client-Secret` | Send the header matching `CLIENT_SECRET` in `.env` |
 | `400 org_id is required` | Listing/creating without an operating unit | Add `?org_id=<n>` (get valid values from `GET /orgs`) |
+| `POST /invoices` returns `202` but `request_id` is `0` | `EBS_APPS_USER_ID`/`EBS_APPS_RESP_ID`/`EBS_APPS_RESP_APPL_ID` unset, so `FND_GLOBAL.APPS_INITIALIZE` ran with no real apps session and `FND_REQUEST.SUBMIT_REQUEST` silently failed | Set all three to a valid Oracle Applications user/responsibility (see [Creating invoices](#creating-invoices-the-post-flow)) |
+| Import status is `Completed`/`Normal` but the response has no `interface_status`/`invoice_id` | `interface_invoice_id` wasn't passed on the status call, and more than one interface row shares this `request_id` (old backlog swept in together) | Pass `?interface_invoice_id=<value from the POST response>` — see [Creating invoices](#creating-invoices-the-post-flow) |
+| `interface_status: "REJECTED"` | The interface row was rejected for a business reason, not a submission failure | Check `rejection_reasons` in the response — `ACCT DATE NOT IN OPEN PD` (GL period closed), `NO SUPPLIER SITE` (missing/invalid `vendor_site_id`), `DUPLICATE INVOICE NUMBER` (reused `invoice_num`) are the most common |
 | `ORA-00942: table or view does not exist` | Missing grants, or wrong schema owner on this instance | Re-check `docs/db-grants.sql` was run and object owners match your instance |
 | Startup: `Missing required environment variables` | `.env` incomplete | Fill in `CLIENT_SECRET`, `EBS_DB_USER`, `EBS_DB_PASSWORD`, `EBS_DB_CONNECT_STRING` |
 

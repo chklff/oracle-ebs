@@ -4,6 +4,7 @@ const express = require('express');
 const db = require('../db');
 const invoiceRepository = require('../repositories/invoiceRepository');
 const importRepository = require('../repositories/importRepository');
+const dffRepository = require('../repositories/dffRepository');
 const { badRequest, notFound } = require('../errors');
 const { toInt, requireInt, toDate } = require('../util/validation');
 
@@ -30,6 +31,9 @@ function validateCreatePayload(body) {
   const vendorId = Number(body.vendor_id);
   if (!Number.isInteger(vendorId)) errors.push('vendor_id is required and must be an integer');
 
+  const vendorSiteId = Number(body.vendor_site_id);
+  if (!Number.isInteger(vendorSiteId)) errors.push('vendor_site_id is required and must be an integer');
+
   const invoiceAmount = Number(body.invoice_amount);
   if (!Number.isFinite(invoiceAmount)) errors.push('invoice_amount is required and must be a number');
 
@@ -55,6 +59,7 @@ function validateCreatePayload(body) {
     invoice_num: String(body.invoice_num),
     invoice_date: body.invoice_date,
     vendor_id: vendorId,
+    vendor_site_id: vendorSiteId,
     invoice_amount: invoiceAmount,
     currency_code: String(body.currency_code),
     terms_id: body.terms_id !== undefined && body.terms_id !== null ? Number(body.terms_id) : null,
@@ -109,11 +114,32 @@ module.exports = function invoicesRouter(config) {
   router.get('/invoices/import-status/:request_id', async (req, res, next) => {
     try {
       const requestId = requireInt(req.params.request_id, 'request_id');
-      const status = await db.withConnection((conn) =>
-        importRepository.getRequestStatus(conn, requestId),
-      );
-      if (!status) throw notFound('Concurrent request not found');
-      res.json(status);
+      const interfaceInvoiceId = toInt(req.query.interface_invoice_id, 'interface_invoice_id');
+      const result = await db.withConnection(async (conn) => {
+        const status = await importRepository.getRequestStatus(conn, requestId);
+        if (!status) return null;
+        // Only worth the extra lookup once the concurrent program has actually
+        // finished - while Pending/Running there's nothing to report yet.
+        if (status.phase === 'Completed') {
+          const outcome = await importRepository.getImportOutcome(conn, { requestId, interfaceInvoiceId });
+          if (outcome) return { ...status, ...outcome };
+        }
+        return status;
+      });
+      if (!result) throw notFound('Concurrent request not found');
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /invoices/dff-schema - custom_fields (attribute1..15) column -> label
+  // metadata, per context. Declared before /invoices/:id for the same reason
+  // as import-status above.
+  router.get('/invoices/dff-schema', async (_req, res, next) => {
+    try {
+      const contexts = await db.withConnection((conn) => dffRepository.getInvoiceDffSchema(conn));
+      res.json({ contexts });
     } catch (err) {
       next(err);
     }
@@ -140,9 +166,9 @@ module.exports = function invoicesRouter(config) {
   router.post('/invoices', async (req, res, next) => {
     try {
       const payload = validateCreatePayload(req.body);
-      const requestId = await db.withConnection(async (conn) => {
-        await invoiceRepository.createInvoiceInterface(conn, payload, config.import.source);
-        return importRepository.submitImport(conn, {
+      const { requestId, interfaceInvoiceId } = await db.withConnection(async (conn) => {
+        const invoiceId = await invoiceRepository.createInvoiceInterface(conn, payload, config.import.source);
+        const request = await importRepository.submitImport(conn, {
           appsUserId: config.import.appsUserId,
           responsibilityId: config.import.responsibilityId,
           responsibilityApplId: config.import.responsibilityApplId,
@@ -150,9 +176,16 @@ module.exports = function invoicesRouter(config) {
           programApplication: config.import.programApplication,
           programShortName: config.import.programShortName,
           source: config.import.source,
+          batchName: config.import.batchName,
         });
+        return { requestId: request, interfaceInvoiceId: invoiceId };
       });
-      res.status(202).json({ status: 'submitted', request_id: requestId });
+      // interface_invoice_id uniquely identifies the row this call staged -
+      // pass it back to GET /invoices/import-status/:request_id?interface_invoice_id=
+      // for a precise outcome lookup. request_id alone can be ambiguous once
+      // other pending/rejected rows exist for the same org+source, since one
+      // concurrent run sweeps all of them together.
+      res.status(202).json({ status: 'submitted', request_id: requestId, interface_invoice_id: interfaceInvoiceId });
     } catch (err) {
       next(err);
     }

@@ -124,16 +124,19 @@ async function getInvoiceLines(conn, invoiceId) {
   return (result.rows || []).map(mapLine);
 }
 
+// vendor_site_id is not optional in practice: Payables rejects any invoice
+// with no resolvable supplier site ("NO SUPPLIER SITE"), even though the
+// interface table itself allows the column to be null.
 const INSERT_HEADER = `
   INSERT INTO ap_invoices_interface (
-    invoice_id, invoice_num, invoice_date, vendor_id,
+    invoice_id, invoice_num, invoice_date, vendor_id, vendor_site_id,
     invoice_amount, invoice_currency_code, terms_id, description,
     org_id, source, attribute_category,
     attribute1, attribute2, attribute3, attribute4, attribute5,
     attribute6, attribute7, attribute8, attribute9, attribute10,
     attribute11, attribute12, attribute13, attribute14, attribute15
   ) VALUES (
-    ap_invoices_interface_s.NEXTVAL, :invoice_num, TO_DATE(:invoice_date, 'YYYY-MM-DD'), :vendor_id,
+    ap_invoices_interface_s.NEXTVAL, :invoice_num, TO_DATE(:invoice_date, 'YYYY-MM-DD'), :vendor_id, :vendor_site_id,
     :invoice_amount, :currency_code, :terms_id, :description,
     :org_id, :source, :attribute_category,
     :attribute1, :attribute2, :attribute3, :attribute4, :attribute5,
@@ -169,6 +172,7 @@ async function createInvoiceInterface(conn, payload, importSource) {
     invoice_num: payload.invoice_num,
     invoice_date: payload.invoice_date,
     vendor_id: payload.vendor_id,
+    vendor_site_id: payload.vendor_site_id,
     invoice_amount: payload.invoice_amount,
     currency_code: payload.currency_code,
     terms_id: payload.terms_id ?? null,

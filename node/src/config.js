@@ -60,6 +60,10 @@ function loadConfig(env = process.env) {
       programApplication: env.EBS_IMPORT_PROGRAM_APP || 'SQLAP',
       programShortName: env.EBS_IMPORT_PROGRAM_SHORT || 'APXIIMPT',
       source: env.EBS_IMPORT_SOURCE || 'MAKE_API',
+      // APXIIMPT's "Batch Name" SRS parameter is required but has no effect
+      // when AP_USE_INV_BATCH_CONTROLS is off (the common case) - see
+      // importRepository.js for how this default was derived.
+      batchName: env.EBS_IMPORT_BATCH_NAME || 'N/A',
       appsUserId: intOrUndefined(env.EBS_APPS_USER_ID),
       responsibilityId: intOrUndefined(env.EBS_APPS_RESP_ID),
       responsibilityApplId: intOrUndefined(env.EBS_APPS_RESP_APPL_ID),

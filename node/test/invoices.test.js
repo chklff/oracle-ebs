@@ -116,6 +116,7 @@ describe('POST /invoices', () => {
     invoice_num: 'INV-1001',
     invoice_date: '2026-07-01',
     vendor_id: 987,
+    vendor_site_id: 654,
     invoice_amount: 1500,
     currency_code: 'USD',
     lines: [{ amount: 1500, dist_code_combination_id: 55501 }],
@@ -149,16 +150,17 @@ describe('POST /invoices', () => {
       .mockResolvedValueOnce({ outBinds: { request_id: 8675309 } });
 
     const res = await request(app).post('/invoices').set(AUTH_HEADER).send(validBody).expect(202);
-    expect(res.body).toEqual({ status: 'submitted', request_id: 8675309 });
+    expect(res.body).toEqual({ status: 'submitted', request_id: 8675309, interface_invoice_id: 777 });
     expect(mockExecute).toHaveBeenCalledTimes(3);
   });
 });
 
 describe('GET /invoices/import-status/:request_id', () => {
-  test('decodes phase and status codes', async () => {
-    mockExecute.mockResolvedValueOnce({
-      rows: [{ REQUEST_ID: 8675309, PHASE_CODE: 'C', STATUS_CODE: 'C' }],
-    });
+  test('decodes phase and status codes when no interface row matches', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ REQUEST_ID: 8675309, PHASE_CODE: 'C', STATUS_CODE: 'C' }] })
+      .mockResolvedValueOnce({ rows: [] }); // no ap_invoices_interface row for this request_id
+
     const res = await request(app)
       .get('/invoices/import-status/8675309')
       .set(AUTH_HEADER)
@@ -169,6 +171,61 @@ describe('GET /invoices/import-status/:request_id', () => {
       status: 'Normal',
       phase_code: 'C',
       status_code: 'C',
+    });
+  });
+
+  test('ignores an ambiguous request_id match (multiple rows swept together) without interface_invoice_id', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [{ REQUEST_ID: 8675309, PHASE_CODE: 'C', STATUS_CODE: 'C' }] }).mockResolvedValueOnce({
+      rows: [
+        { INVOICE_ID: 1, INVOICE_NUM: 'A', VENDOR_ID: 1, ORG_ID: 101, STATUS: 'REJECTED' },
+        { INVOICE_ID: 2, INVOICE_NUM: 'B', VENDOR_ID: 1, ORG_ID: 101, STATUS: 'PROCESSED' },
+      ],
+    });
+
+    const res = await request(app)
+      .get('/invoices/import-status/8675309')
+      .set(AUTH_HEADER)
+      .expect(200);
+    expect(res.body).toEqual({
+      request_id: 8675309,
+      phase: 'Completed',
+      status: 'Normal',
+      phase_code: 'C',
+      status_code: 'C',
+    });
+  });
+
+  test('interface_invoice_id gives a precise outcome even when request_id is ambiguous', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ REQUEST_ID: 8675309, PHASE_CODE: 'C', STATUS_CODE: 'C' }] })
+      .mockResolvedValueOnce({
+        rows: [{ INVOICE_ID: 5173458, INVOICE_NUM: 'INV-1001', VENDOR_ID: 987, ORG_ID: 101, STATUS: 'PROCESSED' }],
+      })
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 565059 }] });
+
+    const res = await request(app)
+      .get('/invoices/import-status/8675309?interface_invoice_id=5173458')
+      .set(AUTH_HEADER)
+      .expect(200);
+    expect(res.body).toMatchObject({ interface_status: 'PROCESSED', invoice_id: 565059 });
+  });
+
+  test('includes the rejection reason when the interface row was rejected', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ REQUEST_ID: 8675309, PHASE_CODE: 'C', STATUS_CODE: 'E' }] })
+      .mockResolvedValueOnce({
+        rows: [{ INVOICE_ID: 5173458, INVOICE_NUM: 'INV-1001', VENDOR_ID: 987, ORG_ID: 101, STATUS: 'REJECTED' }],
+      })
+      .mockResolvedValueOnce({ rows: [{ REJECT_LOOKUP_CODE: 'NO SUPPLIER SITE' }] });
+
+    const res = await request(app)
+      .get('/invoices/import-status/8675309')
+      .set(AUTH_HEADER)
+      .expect(200);
+    expect(res.body).toMatchObject({
+      interface_status: 'REJECTED',
+      invoice_id: null,
+      rejection_reasons: ['NO SUPPLIER SITE'],
     });
   });
 

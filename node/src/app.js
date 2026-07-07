@@ -6,6 +6,9 @@ const { requestLogger } = require('./middleware/requestLogger');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const healthRouter = require('./routes/health');
 const orgsRouter = require('./routes/orgs');
+const vendorsRouter = require('./routes/vendors');
+const termsRouter = require('./routes/terms');
+const currenciesRouter = require('./routes/currencies');
 const invoicesRouter = require('./routes/invoices');
 
 /**
@@ -26,6 +29,9 @@ function createApp(config, logger) {
   // Everything below requires a valid X-Client-Secret.
   app.use(requireClientSecret(config.clientSecret, logger));
   app.use('/', orgsRouter());
+  app.use('/', vendorsRouter());
+  app.use('/', termsRouter());
+  app.use('/', currenciesRouter());
   app.use('/', invoicesRouter(config));
 
   app.use(notFoundHandler);
