@@ -130,11 +130,18 @@ const REAL_INVOICE_ID = `
      AND vendor_id = :vendor_id
      AND org_id = :org_id`;
 
+// Rejections can be logged against the header (AP_INVOICES_INTERFACE, keyed
+// by invoice_id) or against a specific line (AP_INVOICE_LINES_INTERFACE,
+// keyed by invoice_line_id, NOT invoice_id) - e.g. a PO-matching failure like
+// "INVALID PO SHIPMENT NUM" is line-level. Checking header-only misses these
+// entirely - verified live against a real PO-matched-line rejection.
 const REJECTION_REASONS = `
   SELECT reject_lookup_code
     FROM ap_interface_rejections
-   WHERE parent_table = 'AP_INVOICES_INTERFACE'
-     AND parent_id = :interface_invoice_id`;
+   WHERE (parent_table = 'AP_INVOICES_INTERFACE' AND parent_id = :interface_invoice_id)
+      OR (parent_table = 'AP_INVOICE_LINES_INTERFACE' AND parent_id IN (
+            SELECT invoice_line_id FROM ap_invoice_lines_interface WHERE invoice_id = :interface_invoice_id
+          ))`;
 
 /**
  * What actually happened to a staged invoice, beyond the raw concurrent-

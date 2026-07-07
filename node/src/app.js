@@ -9,6 +9,7 @@ const orgsRouter = require('./routes/orgs');
 const vendorsRouter = require('./routes/vendors');
 const termsRouter = require('./routes/terms');
 const currenciesRouter = require('./routes/currencies');
+const purchaseOrdersRouter = require('./routes/purchaseOrders');
 const invoicesRouter = require('./routes/invoices');
 
 /**
@@ -32,6 +33,7 @@ function createApp(config, logger) {
   app.use('/', vendorsRouter());
   app.use('/', termsRouter());
   app.use('/', currenciesRouter());
+  app.use('/', purchaseOrdersRouter());
   app.use('/', invoicesRouter(config));
 
   app.use(notFoundHandler);

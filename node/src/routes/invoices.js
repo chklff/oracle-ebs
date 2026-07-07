@@ -46,8 +46,19 @@ function validateCreatePayload(body) {
       if (!Number.isFinite(Number(line.amount))) {
         errors.push(`lines[${idx}].amount is required and must be a number`);
       }
-      if (line.dist_code_combination_id === undefined && !line.account) {
-        errors.push(`lines[${idx}] requires dist_code_combination_id or account`);
+      // A line is either GL-coded (dist_code_combination_id/account) or
+      // PO-matched (po_line_id + po_line_location_id + quantity_invoiced) -
+      // mutually exclusive, exactly one shape required.
+      const isGlCoded = line.dist_code_combination_id !== undefined || !!line.account;
+      const isPoMatched = line.po_line_id !== undefined && line.po_line_location_id !== undefined;
+      if (isGlCoded && isPoMatched) {
+        errors.push(`lines[${idx}] cannot be both GL-coded and PO-matched - pick one`);
+      } else if (!isGlCoded && !isPoMatched) {
+        errors.push(
+          `lines[${idx}] requires dist_code_combination_id or account, or po_line_id and po_line_location_id`,
+        );
+      } else if (isPoMatched && !Number.isFinite(Number(line.quantity_invoiced))) {
+        errors.push(`lines[${idx}].quantity_invoiced is required and must be a number for a PO-matched line`);
       }
     });
   }
@@ -79,6 +90,19 @@ function validateCreatePayload(body) {
           ? Number(line.dist_code_combination_id)
           : null,
       account: line.account ?? null,
+      // PO-matched shape - mutually exclusive with dist_code_combination_id/
+      // account above. po_line_location_id is the shipment being matched
+      // against (see GET /purchase-orders/:po_header_id/lines); Oracle
+      // derives GL coding from the PO itself for these lines.
+      po_line_id: line.po_line_id !== undefined && line.po_line_id !== null ? Number(line.po_line_id) : null,
+      po_line_location_id:
+        line.po_line_location_id !== undefined && line.po_line_location_id !== null
+          ? Number(line.po_line_location_id)
+          : null,
+      quantity_invoiced:
+        line.quantity_invoiced !== undefined && line.quantity_invoiced !== null
+          ? Number(line.quantity_invoiced)
+          : null,
       // Only relevant for line_type "TAX" - this instance uses Oracle's
       // e-Business Tax engine, not legacy tax codes, so a tax line is
       // identified by regime/status/rate (or classification code), not a

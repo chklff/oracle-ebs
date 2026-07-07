@@ -152,15 +152,22 @@ const INSERT_HEADER = `
 // and rejects a tax line with ZX_TAX_RATE_ID_CODE_MISSING if
 // tax_jurisdiction_code is left out (rates vary by jurisdiction even for the
 // same regime/status/rate code) - verified live.
+// po_line_id/po_line_location_id/quantity_invoiced are only meaningful on a
+// PO-matched line (mutually exclusive with dist_code_combination_id/account -
+// enforced in validateCreatePayload). po_line_location_id is the shipment
+// (see GET /purchase-orders/:po_header_id/lines); Oracle derives GL coding
+// from the PO itself for these, dist_code_combination_id stays null.
 const INSERT_LINE = `
   INSERT INTO ap_invoice_lines_interface (
     invoice_id, invoice_line_id, line_number, line_type_lookup_code,
     amount, description, dist_code_combination_id, dist_code_concatenated,
+    po_line_id, po_line_location_id, quantity_invoiced,
     tax_regime_code, tax_status_code, tax_rate_code, tax_jurisdiction_code,
     tax_classification_code
   ) VALUES (
     :invoice_id, ap_invoice_lines_interface_s.NEXTVAL, :line_number, :line_type,
     :amount, :description, :dist_code_combination_id, :dist_code_concatenated,
+    :po_line_id, :po_line_location_id, :quantity_invoiced,
     :tax_regime_code, :tax_status_code, :tax_rate_code, :tax_jurisdiction_code,
     :tax_classification_code
   )`;
@@ -212,6 +219,9 @@ async function createInvoiceInterface(conn, payload, importSource) {
         description: line.description ?? null,
         dist_code_combination_id: line.dist_code_combination_id ?? null,
         dist_code_concatenated: line.account ?? null,
+        po_line_id: line.po_line_id ?? null,
+        po_line_location_id: line.po_line_location_id ?? null,
+        quantity_invoiced: line.quantity_invoiced ?? null,
         tax_regime_code: line.tax_regime_code ?? null,
         tax_status_code: line.tax_status_code ?? null,
         tax_rate_code: line.tax_rate_code ?? null,

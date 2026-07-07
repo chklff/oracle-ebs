@@ -140,6 +140,55 @@ describe('POST /invoices', () => {
     );
   });
 
+  test('400 when a line is both GL-coded and PO-matched', async () => {
+    const res = await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({
+        ...validBody,
+        lines: [{ amount: 10, dist_code_combination_id: 55501, po_line_id: 61, po_line_location_id: 12067 }],
+      })
+      .expect(400);
+    expect(res.body.details).toEqual(
+      expect.arrayContaining([expect.stringMatching(/cannot be both GL-coded and PO-matched/)]),
+    );
+  });
+
+  test('400 when a PO-matched line is missing quantity_invoiced', async () => {
+    const res = await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({ ...validBody, lines: [{ amount: 10, po_line_id: 61, po_line_location_id: 12067 }] })
+      .expect(400);
+    expect(res.body.details).toEqual(
+      expect.arrayContaining([expect.stringMatching(/quantity_invoiced is required/)]),
+    );
+  });
+
+  test('stages a PO-matched line', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ outBinds: { out_invoice_id: [777] } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ outBinds: { request_id: 8675309 } });
+    await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({
+        ...validBody,
+        lines: [{ amount: 10, po_line_id: 61, po_line_location_id: 12067, quantity_invoiced: 1 }],
+      })
+      .expect(202);
+    const [, lineBinds] = mockExecute.mock.calls.at(-2);
+    expect(lineBinds).toEqual(
+      expect.objectContaining({
+        po_line_id: 61,
+        po_line_location_id: 12067,
+        quantity_invoiced: 1,
+        dist_code_combination_id: null,
+      }),
+    );
+  });
+
   test('stages the invoice and returns the import request id', async () => {
     mockExecute
       // header insert -> RETURNING invoice_id

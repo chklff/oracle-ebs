@@ -189,6 +189,71 @@ combinations). This one is a separate, larger effort - see the note under
 
 ---
 
+## GET /purchase-orders
+
+List open purchase orders for a vendor, so a caller can discover valid
+`po_header_id` values for PO-matched invoice lines. Filtered to
+`closed_code != 'FINALLY CLOSED'` (or null) so fully-consumed POs don't
+clutter the list.
+
+| Query param | Required | Notes |
+|-------------|----------|-------|
+| `org_id`    | yes      | Operating unit to filter by |
+| `vendor_id` | yes      | Supplier to filter by |
+
+```bash
+curl "$BASE_URL/purchase-orders?org_id=204&vendor_id=1" \
+  -H "X-Client-Secret: $CLIENT_SECRET"
+```
+
+```json
+[
+  { "po_header_id": 61, "po_number": "501", "type": "BLANKET" }
+]
+```
+
+Missing `org_id` or `vendor_id` → `400`.
+
+---
+
+## GET /purchase-orders/:po_header_id/lines
+
+List a PO's *shipments* (not lines - a single PO line commonly has dozens of
+shipments/releases; a live Blanket PO on the reference instance had 70+, most
+long since closed), filtered to `closed_code = 'OPEN'` and not cancelled, so
+this only returns ones genuinely still open to invoice.
+
+```bash
+curl "$BASE_URL/purchase-orders/61/lines" \
+  -H "X-Client-Secret: $CLIENT_SECRET"
+```
+
+```json
+[
+  {
+    "po_line_id": 61,
+    "po_line_location_id": 12067,
+    "line_num": 1,
+    "item_description": "Leather Computer Case",
+    "unit_price": 100,
+    "match_option": "P",
+    "quantity": 750,
+    "quantity_received": 0,
+    "quantity_billed": 0
+  }
+]
+```
+
+**`POST /invoices` does not yet support PO-matched lines end-to-end** - see
+the gotcha under `POST /invoices` below. These two `GET` endpoints work fine
+on their own for discovery/display purposes even though creating a PO-matched
+invoice isn't resolved yet.
+
+Unknown `po_header_id` → empty array, not `404` (matches `GET /invoices`
+behavior for a filter with no results).
+
+---
+
 ## GET /invoices
 
 Paginated invoice list for **one** operating unit.
@@ -354,7 +419,7 @@ synchronously. You get back a `request_id` to poll.
 | `currency_code` | yes | any non-empty value |
 | `lines` | yes | at least 1 |
 | `lines[].amount` | yes | number, per line |
-| `lines[].dist_code_combination_id` or `lines[].account` | yes (one of) | per line |
+| `lines[].dist_code_combination_id` or `lines[].account` (GL-coded), **or** `lines[].po_line_id` + `lines[].po_line_location_id` + `lines[].quantity_invoiced` (PO-matched) | yes (exactly one shape) | per line - mutually exclusive, see the unresolved gap below before relying on the PO-matched shape |
 | `terms_id` | no | nullable |
 | `description` | no | nullable |
 | `custom_fields.*` (attribute1-15, attribute_category) | no | nullable |
@@ -498,6 +563,36 @@ GL-coded line - `line_type: "ITEM"` (or a dedicated type your Chart of
 Accounts uses for tax liability) pointed at the tax-payable account via
 `dist_code_combination_id`/`account` - rather than using `line_type: "TAX"`
 at all. This sidesteps the e-Business Tax engine entirely.
+
+**PO-matched lines (`po_line_id`/`po_line_location_id`) are also an
+unresolved gap.** `GET /purchase-orders` and `GET /purchase-orders/:id/lines`
+work fine for discovery, but actually creating a PO-matched invoice line does
+not. Seven different field combinations were tried live across two POs
+(Standard and Blanket types), surfacing four distinct errors that did not
+converge toward a working combination - later attempts sometimes regressed to
+an earlier error:
+
+1. `po_line_id` + `po_line_location_id` (Blanket PO) → `INVALID PO SHIPMENT NUM`
+2. Same + `po_shipment_num` → same error
+3. Business keys instead (`po_number`+`po_line_number`+`po_shipment_num`,
+   Blanket PO) → `INVALID PO RELEASE INFO`
+4. Same business keys, Standard PO instead → `INVALID SHIPMENT TYPE` (even
+   though the shipment's own `shipment_type` column reads `'STANDARD'`)
+5. Same + `po_unit_of_measure` → same error
+6. Full internal IDs + business keys combined → `INVALID PO SHIPMENT NUM`
+   (regression to attempt 1's error)
+7. `po_line_location_id` alone (minimal shape) on the Standard PO → same
+   error as 6
+
+One confirmed real finding along the way: `po_number` (`segment1`) is **not**
+globally unique - 10 different POs on the reference instance share the same
+number, only disambiguated by org/vendor/header id. This likely explains why
+the business-key-only attempts kept resolving to unexpected records. Beyond
+that, converging on the right field combination needs the same kind of access
+the tax-line investigation was blocked on (log file or EBS functional
+expertise) - not something resolvable through further blind trial-and-error
+against this data alone. Treat PO-matched invoice lines as unsupported until
+revisited with better diagnostic access.
 
 **A `request_id` can span far more than the one invoice you just staged.**
 Oracle's import run sweeps *every* still-eligible pending/rejected interface
