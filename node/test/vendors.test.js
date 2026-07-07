@@ -38,6 +38,33 @@ describe('GET /vendors', () => {
       { vendor_id: 11, name: 'Advantage Corp' },
     ]);
   });
+
+  test('filters by name', async () => {
+    mockExecute.mockResolvedValueOnce({
+      rows: [{ VENDOR_ID: 1, NAME: 'GE Plastics', TAX_ID: null }],
+    });
+    const res = await request(app).get('/vendors?org_id=204&name=plastics').set(AUTH_HEADER).expect(200);
+    expect(res.body).toEqual([{ vendor_id: 1, name: 'GE Plastics', tax_id: null }]);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ org_id: 204, name: '%plastics%' }),
+    );
+  });
+
+  test('filters by tax_id', async () => {
+    mockExecute.mockResolvedValueOnce({
+      rows: [{ VENDOR_ID: 4, NAME: 'United Parcel Service', TAX_ID: '12345678901' }],
+    });
+    const res = await request(app)
+      .get('/vendors?org_id=204&tax_id=12345678901')
+      .set(AUTH_HEADER)
+      .expect(200);
+    expect(res.body).toEqual([{ vendor_id: 4, name: 'United Parcel Service', tax_id: '12345678901' }]);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ org_id: 204, tax_id: '12345678901' }),
+    );
+  });
 });
 
 describe('GET /vendor-sites', () => {

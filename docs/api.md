@@ -80,6 +80,8 @@ the target org can't be used for `POST /invoices` there anyway).
 | Query param | Required | Notes |
 |-------------|----------|-------|
 | `org_id`    | yes      | Operating unit to filter by |
+| `name`      | no       | Case-insensitive partial match on `vendor_name` |
+| `tax_id`    | no       | Exact match on `vat_registration_num` |
 
 ```bash
 curl "$BASE_URL/vendors?org_id=204" \
@@ -88,10 +90,25 @@ curl "$BASE_URL/vendors?org_id=204" \
 
 ```json
 [
-  { "vendor_id": 1, "name": "GE Plastics" },
-  { "vendor_id": 11, "name": "Advantage Corp" }
+  { "vendor_id": 1, "name": "GE Plastics", "tax_id": null },
+  { "vendor_id": 11, "name": "Advantage Corp", "tax_id": null }
 ]
 ```
+
+```bash
+curl "$BASE_URL/vendors?org_id=204&tax_id=12345678901" \
+  -H "X-Client-Secret: $CLIENT_SECRET"
+```
+
+`tax_id` matches `ap_suppliers.vat_registration_num` - the standout real,
+populated column (40/426 suppliers on the reference instance) for a general
+vendor tax ID. Two other candidate columns exist (`num_1099` - US 1099
+reporting specifically, not a general tax ID; `company_registration_number` -
+present but entirely unpopulated on the reference instance). **Confirm
+`vat_registration_num` is actually where a given customer's real tax ID data
+lives before relying on this for a new integration** - don't assume it
+transfers from one instance to the next any more than `dist_code_combination_id`
+formats do.
 
 Missing `org_id` → `400`.
 

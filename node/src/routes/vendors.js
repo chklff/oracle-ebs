@@ -15,7 +15,9 @@ module.exports = function vendorsRouter() {
   router.get('/vendors', async (req, res, next) => {
     try {
       const orgId = requireInt(req.query.org_id, 'org_id');
-      const vendors = await db.withConnection((conn) => vendorRepository.listVendors(conn, orgId));
+      const name = req.query.name !== undefined && req.query.name !== '' ? String(req.query.name) : undefined;
+      const taxId = req.query.tax_id !== undefined && req.query.tax_id !== '' ? String(req.query.tax_id) : undefined;
+      const vendors = await db.withConnection((conn) => vendorRepository.listVendors(conn, { orgId, name, taxId }));
       res.json(vendors);
     } catch (err) {
       next(err);
