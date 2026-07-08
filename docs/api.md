@@ -79,9 +79,17 @@ the target org can't be used for `POST /invoices` there anyway).
 
 | Query param | Required | Notes |
 |-------------|----------|-------|
-| `org_id`    | yes      | Operating unit to filter by |
+| `org_id`    | yes, unless `name`/`tax_id` given | Operating unit to filter by |
 | `name`      | no       | Case-insensitive partial match on `vendor_name` |
 | `tax_id`    | no       | Exact match on `vat_registration_num` |
+
+**`org_id` is optional when searching by `name` or `tax_id`** - in that case
+the search runs across every org instead of one. This matters when a caller
+only has a vendor's name or tax ID (e.g. from an external system like
+Monday.com) and doesn't yet know which operating unit it belongs to - without
+this, there'd be no way to even find the vendor. At least one of `org_id`,
+`name`, `tax_id` is required, or it's a `400` (this endpoint won't dump every
+vendor on the instance unscoped).
 
 ```bash
 curl "$BASE_URL/vendors?org_id=204" \

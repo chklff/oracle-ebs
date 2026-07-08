@@ -65,6 +65,24 @@ describe('GET /vendors', () => {
       expect.objectContaining({ org_id: 204, tax_id: '12345678901' }),
     );
   });
+
+  test('searches by tax_id across all orgs when org_id is omitted', async () => {
+    mockExecute.mockResolvedValueOnce({
+      rows: [{ VENDOR_ID: 21, NAME: 'Advanced Network Devices', TAX_ID: 'PL521-020-14-90' }],
+    });
+    const res = await request(app).get('/vendors?tax_id=PL521-020-14-90').set(AUTH_HEADER).expect(200);
+    expect(res.body).toEqual([{ vendor_id: 21, name: 'Advanced Network Devices', tax_id: 'PL521-020-14-90' }]);
+    const [sql, binds] = mockExecute.mock.calls.at(-1);
+    expect(binds).not.toHaveProperty('org_id');
+    expect(sql).not.toMatch(/ap_supplier_sites_all/);
+  });
+
+  test('searches by name across all orgs when org_id is omitted', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [] });
+    await request(app).get('/vendors?name=plastics').set(AUTH_HEADER).expect(200);
+    const [, binds] = mockExecute.mock.calls.at(-1);
+    expect(binds).not.toHaveProperty('org_id');
+  });
 });
 
 describe('GET /vendor-sites', () => {
