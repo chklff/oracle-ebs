@@ -515,6 +515,58 @@ Each line requires either `dist_code_combination_id` (numeric code combination
 id) or `account` (a concatenated account string, mapped to
 `dist_code_concatenated`). Missing required fields → `400`.
 
+### Optional fields not shown in the example above
+
+The example is deliberately the minimal, **proven-working** shape. These
+fields are real and accepted, but experimental/unresolved (see the gotchas
+below before relying on them):
+
+```json
+{
+  "org_id": 204,
+  "invoice_num": "INV-1002",
+  "invoice_date": "2026-07-01",
+  "vendor_id": 2,
+  "vendor_site_id": 2,
+  "invoice_amount": 500.00,
+  "currency_code": "USD",
+  "invoice_type": "CREDIT",
+  "calc_tax_during_import": true,
+  "lines": [
+    {
+      "amount": 500.00,
+      "po_header_id": 5181,
+      "po_line_id": 5189,
+      "po_line_number": 1,
+      "po_line_location_id": 5420,
+      "po_shipment_num": 1,
+      "po_unit_of_measure": "Each",
+      "unit_price": 100.00,
+      "quantity_invoiced": 5
+    }
+  ]
+}
+```
+
+- `invoice_type` - confirmed working: `STANDARD` (default), `CREDIT`. Not confirmed: anything else.
+- `calc_tax_during_import` - untested end-to-end.
+- The PO-matched line shape above (replaces `dist_code_combination_id`/`account`) - untested end-to-end, no known-working field combination yet.
+
+A `TAX`-type line looks like this (also untested end-to-end):
+
+```json
+{
+  "amount": 42.50,
+  "line_type": "TAX",
+  "dist_code_combination_id": 12975,
+  "tax_regime_code": "US-SALES-TAX-101",
+  "tax_status_code": "STANDARD",
+  "tax_rate_code": "STANDARD",
+  "tax_jurisdiction_code": "CI-NY-NEW YORK-121661",
+  "tax_classification_code": "STD"
+}
+```
+
 ### Gotchas (found the hard way, against a real instance)
 
 A `202 submitted` response only means Oracle accepted the request into its
