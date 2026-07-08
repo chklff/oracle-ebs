@@ -79,6 +79,12 @@ function validateCreatePayload(body) {
     // of truth and rejects an invalid value during import; hardcoding a list
     // here would just be another thing to keep in sync per instance.
     invoice_type: body.invoice_type !== undefined && body.invoice_type !== null ? String(body.invoice_type) : 'STANDARD',
+    // Untested end-to-end - one of the fields tried (and not yet proven) in
+    // the e-Business Tax investigation, see docs/api.md gotchas. Real column
+    // (calc_tax_during_import_flag), exposed so it can be experimented with
+    // through the API without a code change once someone has the access to
+    // actually resolve this.
+    calc_tax_during_import: body.calc_tax_during_import === true ? 'Y' : null,
     description: body.description ?? null,
     custom_fields: body.custom_fields && typeof body.custom_fields === 'object' ? body.custom_fields : {},
     lines: body.lines.map((line) => ({
@@ -103,6 +109,17 @@ function validateCreatePayload(body) {
         line.quantity_invoiced !== undefined && line.quantity_invoiced !== null
           ? Number(line.quantity_invoiced)
           : null,
+      // Additional PO-matching fields tried during the (unresolved) live
+      // investigation - see docs/api.md gotchas. Real AP_INVOICE_LINES_INTERFACE
+      // columns, exposed so the exact required combination can be
+      // experimented with through the API without a code change.
+      po_header_id: line.po_header_id !== undefined && line.po_header_id !== null ? Number(line.po_header_id) : null,
+      po_line_number:
+        line.po_line_number !== undefined && line.po_line_number !== null ? Number(line.po_line_number) : null,
+      po_shipment_num:
+        line.po_shipment_num !== undefined && line.po_shipment_num !== null ? Number(line.po_shipment_num) : null,
+      po_unit_of_measure: line.po_unit_of_measure ?? null,
+      unit_price: line.unit_price !== undefined && line.unit_price !== null ? Number(line.unit_price) : null,
       // Only relevant for line_type "TAX" - this instance uses Oracle's
       // e-Business Tax engine, not legacy tax codes, so a tax line is
       // identified by regime/status/rate (or classification code), not a

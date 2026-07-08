@@ -433,7 +433,9 @@ synchronously. You get back a `request_id` to poll.
 | `custom_fields.*` (attribute1-15, attribute_category) | no | nullable |
 | `lines[].line_type` | no | defaults to `ITEM`. `TAX` exists structurally but see the unresolved gap below before relying on it |
 | `lines[].tax_regime_code`, `lines[].tax_status_code`, `lines[].tax_rate_code`, `lines[].tax_jurisdiction_code`, `lines[].tax_classification_code` | no | Only meaningful on a `TAX` line (e-Business Tax engine) - see the unresolved gap below |
+| `lines[].po_header_id`, `lines[].po_line_number`, `lines[].po_shipment_num`, `lines[].po_unit_of_measure`, `lines[].unit_price` | no | Additional PO-matching fields beyond the required PO-matched shape above - real `AP_INVOICE_LINES_INTERFACE` columns, exposed for experimentation; see the unresolved gap below, no known-working combination yet |
 | `invoice_type` | no | defaults to `STANDARD`. See below - **not** every value works with just `vendor_id`/`vendor_site_id` |
+| `calc_tax_during_import` | no | boolean, maps to `calc_tax_during_import_flag`. Untested end-to-end - see the tax gotcha below |
 
 **`invoice_type`** maps to `invoice_type_lookup_code`, not validated against a
 hardcoded enum here (same approach as `currency_code` - Oracle's own
@@ -601,6 +603,13 @@ the tax-line investigation was blocked on (log file or EBS functional
 expertise) - not something resolvable through further blind trial-and-error
 against this data alone. Treat PO-matched invoice lines as unsupported until
 revisited with better diagnostic access.
+
+All the fields tried above (`po_header_id`, `po_line_number`,
+`po_shipment_num`, `po_unit_of_measure`, `unit_price`, plus header-level
+`calc_tax_during_import`) are now exposed on `POST /invoices` even though no
+working combination has been found - real `AP_INVOICE_LINES_INTERFACE`
+columns, so whoever picks this up next can experiment through the API
+directly instead of adding fields to the wrapper first.
 
 **A `request_id` can span far more than the one invoice you just staged.**
 Oracle's import run sweeps *every* still-eligible pending/rejected interface

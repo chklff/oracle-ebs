@@ -189,6 +189,46 @@ describe('POST /invoices', () => {
     );
   });
 
+  test('passes through the extended PO-matching fields and calc_tax_during_import', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ outBinds: { out_invoice_id: [777] } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ outBinds: { request_id: 8675309 } });
+    await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({
+        ...validBody,
+        calc_tax_during_import: true,
+        lines: [
+          {
+            amount: 500,
+            po_header_id: 5181,
+            po_line_id: 5189,
+            po_line_number: 1,
+            po_line_location_id: 5420,
+            po_shipment_num: 1,
+            po_unit_of_measure: 'Each',
+            unit_price: 100,
+            quantity_invoiced: 5,
+          },
+        ],
+      })
+      .expect(202);
+    const [, headerBinds] = mockExecute.mock.calls.at(-3);
+    expect(headerBinds).toEqual(expect.objectContaining({ calc_tax_during_import: 'Y' }));
+    const [, lineBinds] = mockExecute.mock.calls.at(-2);
+    expect(lineBinds).toEqual(
+      expect.objectContaining({
+        po_header_id: 5181,
+        po_line_number: 1,
+        po_shipment_num: 1,
+        po_unit_of_measure: 'Each',
+        unit_price: 100,
+      }),
+    );
+  });
+
   test('stages the invoice and returns the import request id', async () => {
     mockExecute
       // header insert -> RETURNING invoice_id
