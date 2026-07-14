@@ -189,6 +189,29 @@ describe('POST /invoices', () => {
     );
   });
 
+  test('accepts po_line_location_id alone as a PO-matched line - po_line_id is not required', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ outBinds: { out_invoice_id: [777] } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ outBinds: { request_id: 8675309 } });
+    await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({
+        ...validBody,
+        lines: [{ amount: 10, po_line_location_id: 78018, quantity_invoiced: 1 }],
+      })
+      .expect(202);
+    const [, lineBinds] = mockExecute.mock.calls.at(-2);
+    expect(lineBinds).toEqual(
+      expect.objectContaining({
+        po_line_id: null,
+        po_line_location_id: 78018,
+        quantity_invoiced: 1,
+      }),
+    );
+  });
+
   test('passes through the extended PO-matching fields and calc_tax_during_import', async () => {
     mockExecute
       .mockResolvedValueOnce({ outBinds: { out_invoice_id: [777] } })

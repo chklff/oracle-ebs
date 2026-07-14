@@ -156,17 +156,18 @@ const INSERT_HEADER = `
 // and rejects a tax line with ZX_TAX_RATE_ID_CODE_MISSING if
 // tax_jurisdiction_code is left out (rates vary by jurisdiction even for the
 // same regime/status/rate code) - verified live.
-// po_line_id/po_line_location_id/quantity_invoiced are only meaningful on a
-// PO-matched line (mutually exclusive with dist_code_combination_id/account -
-// enforced in validateCreatePayload). po_line_location_id is the shipment
-// (see GET /purchase-orders/:po_header_id/lines); Oracle derives GL coding
-// from the PO itself for these, dist_code_combination_id stays null.
-// po_header_id/po_line_number/po_shipment_num/po_unit_of_measure/unit_price
-// are additional PO-matching fields - real AP_INVOICE_LINES_INTERFACE
-// columns, exposed so callers can pass what they have. po_release_id is
-// required in addition to po_line_id/po_line_location_id whenever the
-// shipment belongs to a Blanket PO release (PO_LINE_LOCATIONS_ALL.po_release_id
-// is not null for that shipment) - confirmed live, see docs/api.md gotchas.
+// po_line_location_id/quantity_invoiced are the only fields actually needed
+// for a PO-matched line (mutually exclusive with dist_code_combination_id/
+// account - enforced in validateCreatePayload). po_line_location_id is the
+// shipment (see GET /purchase-orders/:po_header_id/lines); Oracle derives
+// po_header_id/po_line_id and GL coding from the shipment itself - confirmed
+// live, dist_code_combination_id stays null. po_line_id/po_header_id/
+// po_line_number/po_shipment_num/po_unit_of_measure/unit_price are accepted
+// but not required. po_release_id is the one exception: required in addition
+// to po_line_location_id whenever the shipment belongs to a Blanket PO
+// release (PO_LINE_LOCATIONS_ALL.po_release_id is not null for that
+// shipment) - omitting it is rejected with RELEASE MISSING, confirmed live,
+// see docs/api.md gotchas.
 const INSERT_LINE = `
   INSERT INTO ap_invoice_lines_interface (
     invoice_id, invoice_line_id, line_number, line_type_lookup_code,

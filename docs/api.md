@@ -438,14 +438,14 @@ synchronously. You get back a `request_id` to poll.
 | `currency_code` | yes | any non-empty value |
 | `lines` | yes | at least 1 |
 | `lines[].amount` | yes | number, per line |
-| `lines[].dist_code_combination_id` or `lines[].account` (GL-coded), **or** `lines[].po_line_id` + `lines[].po_line_location_id` + `lines[].quantity_invoiced` (PO-matched) | yes (exactly one shape) | per line - mutually exclusive. PO-matched works end-to-end - see the gotcha below for the one field that trips people up (`po_release_id`) |
+| `lines[].dist_code_combination_id` or `lines[].account` (GL-coded), **or** `lines[].po_line_location_id` + `lines[].quantity_invoiced` (PO-matched) | yes (exactly one shape) | per line - mutually exclusive. PO-matched works end-to-end. `po_line_location_id` alone is enough - Oracle derives `po_header_id`/`po_line_id` itself from the shipment, confirmed live - except see `po_release_id` below |
 | `terms_id` | no | nullable |
 | `description` | no | nullable |
 | `custom_fields.*` (attribute1-15, attribute_category) | no | nullable |
 | `lines[].line_type` | no | defaults to `ITEM`. `TAX` exists structurally but see the unresolved gap below before relying on it |
 | `lines[].tax_regime_code`, `lines[].tax_status_code`, `lines[].tax_rate_code`, `lines[].tax_jurisdiction_code`, `lines[].tax_classification_code` | no | Only meaningful on a `TAX` line (e-Business Tax engine) - see the unresolved gap below |
-| `lines[].po_header_id`, `lines[].po_line_number`, `lines[].po_shipment_num`, `lines[].po_unit_of_measure`, `lines[].unit_price` | no | Additional PO-matching fields - real `AP_INVOICE_LINES_INTERFACE` columns, pass through whatever `GET /purchase-orders/:po_header_id/lines` gave you |
-| `lines[].po_release_id` | conditional | **Required** alongside `po_line_id`/`po_line_location_id` whenever that shipment belongs to a Blanket PO release (i.e. `GET /purchase-orders/:po_header_id/lines` returned a non-null `po_release_id` for it) - confirmed live, see the gotcha below |
+| `lines[].po_header_id`, `lines[].po_line_id`, `lines[].po_line_number`, `lines[].po_shipment_num`, `lines[].po_unit_of_measure`, `lines[].unit_price` | no | Not required - Oracle derives all of these from `po_line_location_id`. Accepted as real `AP_INVOICE_LINES_INTERFACE` columns if you already have them, but there's no need to look them up just for this |
+| `lines[].po_release_id` | conditional | **Required** alongside `po_line_location_id` whenever that shipment belongs to a Blanket PO release (i.e. `GET /purchase-orders/:po_header_id/lines` returned a non-null `po_release_id` for it) - omitting it gets rejected with `RELEASE MISSING`. Confirmed live, see the gotcha below |
 | `invoice_type` | no | defaults to `STANDARD`. See below - **not** every value works with just `vendor_id`/`vendor_site_id` |
 | `calc_tax_during_import` | no | boolean, maps to `calc_tax_during_import_flag`. Untested end-to-end - see the tax gotcha below |
 
@@ -638,7 +638,7 @@ Accounts uses for tax liability) pointed at the tax-payable account via
 `dist_code_combination_id`/`account` - rather than using `line_type: "TAX"`
 at all. This sidesteps the e-Business Tax engine entirely.
 
-**PO-matched lines (`po_line_id`/`po_line_location_id`) now work
+**PO-matched lines (`po_line_location_id`) now work
 end-to-end - the fix was in the discovery data, not the code.** Seven
 attempts originally failed live across two POs, surfacing four distinct
 errors (`INVALID PO SHIPMENT NUM`, `INVALID PO RELEASE INFO`, `INVALID
@@ -661,7 +661,7 @@ attempt explained all four:
 - The Blanket-PO business-key attempt additionally needed `po_release_id` -
   a column that wasn't exposed by this API at all until now. A shipment that
   belongs to a Blanket PO release (`po_line_locations_all.po_release_id` not
-  null) can't be matched by `po_line_id`/`po_line_location_id` alone.
+  null) can't be matched by `po_line_location_id` alone.
 
 None of this was a validation or field-mapping bug in this API - every
 attempt above would have succeeded against a genuinely approved, non-release
@@ -670,15 +670,23 @@ out exactly the traps above (`approved_flag = 'Y'`, `shipment_type` in the
 valid set) so a caller following that endpoint's output won't hit them again,
 and now returns `po_release_id` so release-based shipments are visible.
 
-Confirmed live with two real invoices:
+Confirmed live with three real invoices:
 
-- **Plain Standard PO shipment** (no release): `po_line_id: 39835,
+- **Plain Standard PO shipment** (no release), full shape: `po_line_id: 39835,
   po_line_location_id: 78018, quantity_invoiced: 1, unit_price: 450,
   po_unit_of_measure: "HRS"` → `interface_status: "PROCESSED"`,
   `match_type: "ITEM_TO_PO"`, GL coding auto-derived from the PO as expected.
-- **Blanket PO release shipment**: same shape plus `po_release_id: 2868`
-  (taken from `GET /purchase-orders/:po_header_id/lines`'s `po_release_id`
-  for that shipment) → also `PROCESSED`.
+- **Same shipment, minimal shape**: `po_line_location_id: 78018,
+  quantity_invoiced: 1` - nothing else - also `PROCESSED`, with
+  `po_header_id`/`po_line_id` correctly auto-derived by Oracle from the
+  shipment alone. `po_line_id` and the rest of the "additional PO-matching
+  fields" are genuinely optional, not just under-tested.
+- **Blanket PO release shipment**: `po_line_location_id` + `po_release_id:
+  2868` (taken from `GET /purchase-orders/:po_header_id/lines`'s
+  `po_release_id` for that shipment) → also `PROCESSED`. Omitting
+  `po_release_id` on this same shipment gets rejected with `RELEASE MISSING`
+  - this is the one field that's genuinely required beyond
+  `po_line_location_id`, and only for release-based shipments.
 
 The only remaining real-world consideration if this gets picked up further:
 2-way vs 3-way match handling and partial-invoicing/remaining-quantity

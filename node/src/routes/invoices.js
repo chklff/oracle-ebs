@@ -47,15 +47,17 @@ function validateCreatePayload(body) {
         errors.push(`lines[${idx}].amount is required and must be a number`);
       }
       // A line is either GL-coded (dist_code_combination_id/account) or
-      // PO-matched (po_line_id + po_line_location_id + quantity_invoiced) -
-      // mutually exclusive, exactly one shape required.
+      // PO-matched (po_line_location_id + quantity_invoiced) - mutually
+      // exclusive, exactly one shape required. po_line_location_id alone is
+      // sufficient - Oracle derives po_header_id/po_line_id itself from the
+      // shipment - confirmed live. po_line_id is accepted but not required.
       const isGlCoded = line.dist_code_combination_id !== undefined || !!line.account;
-      const isPoMatched = line.po_line_id !== undefined && line.po_line_location_id !== undefined;
+      const isPoMatched = line.po_line_location_id !== undefined;
       if (isGlCoded && isPoMatched) {
         errors.push(`lines[${idx}] cannot be both GL-coded and PO-matched - pick one`);
       } else if (!isGlCoded && !isPoMatched) {
         errors.push(
-          `lines[${idx}] requires dist_code_combination_id or account, or po_line_id and po_line_location_id`,
+          `lines[${idx}] requires dist_code_combination_id or account, or po_line_location_id`,
         );
       } else if (isPoMatched && !Number.isFinite(Number(line.quantity_invoiced))) {
         errors.push(`lines[${idx}].quantity_invoiced is required and must be a number for a PO-matched line`);
@@ -98,8 +100,10 @@ function validateCreatePayload(body) {
       account: line.account ?? null,
       // PO-matched shape - mutually exclusive with dist_code_combination_id/
       // account above. po_line_location_id is the shipment being matched
-      // against (see GET /purchase-orders/:po_header_id/lines); Oracle
-      // derives GL coding from the PO itself for these lines.
+      // against (see GET /purchase-orders/:po_header_id/lines) and is
+      // sufficient on its own - Oracle derives po_header_id/po_line_id and
+      // GL coding from the shipment itself, confirmed live. po_line_id below
+      // is accepted but not required.
       po_line_id: line.po_line_id !== undefined && line.po_line_id !== null ? Number(line.po_line_id) : null,
       po_line_location_id:
         line.po_line_location_id !== undefined && line.po_line_location_id !== null
