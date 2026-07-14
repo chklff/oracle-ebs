@@ -228,34 +228,45 @@ Missing `org_id` or `vendor_id` → `400`.
 
 List a PO's *shipments* (not lines - a single PO line commonly has dozens of
 shipments/releases; a live Blanket PO on the reference instance had 70+, most
-long since closed), filtered to `closed_code = 'OPEN'` and not cancelled, so
-this only returns ones genuinely still open to invoice.
+long since closed), filtered down to ones that are actually safe to invoice
+against: `closed_code = 'OPEN'`, not cancelled, not consigned, **`approved_flag
+= 'Y'`**, and `shipment_type` in `BLANKET`/`SCHEDULED`/`STANDARD`/`PREPAYMENT`.
+
+The `approved_flag` filter matters more than it looks: Payables rejects a
+PO-matched line against an *unapproved* shipment with `Invalid PO shipment
+number` - an error that reads like a bad ID even when the ID is completely
+correct. Confirmed live (see the gotcha under `POST /invoices` below) - this
+endpoint used to return unapproved/price-break shipments as if they were
+valid candidates, which is exactly what caused that confusing error during
+the original PO-matching investigation.
 
 ```bash
-curl "$BASE_URL/purchase-orders/61/lines" \
+curl "$BASE_URL/purchase-orders/34071/lines" \
   -H "X-Client-Secret: $CLIENT_SECRET"
 ```
 
 ```json
 [
   {
-    "po_line_id": 61,
-    "po_line_location_id": 12067,
-    "line_num": 1,
-    "item_description": "Leather Computer Case",
-    "unit_price": 100,
+    "po_line_id": 39835,
+    "po_line_location_id": 78018,
+    "po_release_id": null,
+    "line_num": 7,
+    "item_description": "Legal Services",
+    "unit_price": 450,
+    "unit_of_measure": "HRS",
     "match_option": "P",
-    "quantity": 750,
+    "shipment_num": 1,
+    "quantity": 159,
     "quantity_received": 0,
     "quantity_billed": 0
   }
 ]
 ```
 
-**`POST /invoices` does not yet support PO-matched lines end-to-end** - see
-the gotcha under `POST /invoices` below. These two `GET` endpoints work fine
-on their own for discovery/display purposes even though creating a PO-matched
-invoice isn't resolved yet.
+`po_release_id` is non-null when the shipment belongs to a Blanket PO
+release. Pass it straight through as `lines[].po_release_id` on
+`POST /invoices` in that case - see below.
 
 Unknown `po_header_id` → empty array, not `404` (matches `GET /invoices`
 behavior for a filter with no results).
@@ -427,13 +438,14 @@ synchronously. You get back a `request_id` to poll.
 | `currency_code` | yes | any non-empty value |
 | `lines` | yes | at least 1 |
 | `lines[].amount` | yes | number, per line |
-| `lines[].dist_code_combination_id` or `lines[].account` (GL-coded), **or** `lines[].po_line_id` + `lines[].po_line_location_id` + `lines[].quantity_invoiced` (PO-matched) | yes (exactly one shape) | per line - mutually exclusive, see the unresolved gap below before relying on the PO-matched shape |
+| `lines[].dist_code_combination_id` or `lines[].account` (GL-coded), **or** `lines[].po_line_id` + `lines[].po_line_location_id` + `lines[].quantity_invoiced` (PO-matched) | yes (exactly one shape) | per line - mutually exclusive. PO-matched works end-to-end - see the gotcha below for the one field that trips people up (`po_release_id`) |
 | `terms_id` | no | nullable |
 | `description` | no | nullable |
 | `custom_fields.*` (attribute1-15, attribute_category) | no | nullable |
 | `lines[].line_type` | no | defaults to `ITEM`. `TAX` exists structurally but see the unresolved gap below before relying on it |
 | `lines[].tax_regime_code`, `lines[].tax_status_code`, `lines[].tax_rate_code`, `lines[].tax_jurisdiction_code`, `lines[].tax_classification_code` | no | Only meaningful on a `TAX` line (e-Business Tax engine) - see the unresolved gap below |
-| `lines[].po_header_id`, `lines[].po_line_number`, `lines[].po_shipment_num`, `lines[].po_unit_of_measure`, `lines[].unit_price` | no | Additional PO-matching fields beyond the required PO-matched shape above - real `AP_INVOICE_LINES_INTERFACE` columns, exposed for experimentation; see the unresolved gap below, no known-working combination yet |
+| `lines[].po_header_id`, `lines[].po_line_number`, `lines[].po_shipment_num`, `lines[].po_unit_of_measure`, `lines[].unit_price` | no | Additional PO-matching fields - real `AP_INVOICE_LINES_INTERFACE` columns, pass through whatever `GET /purchase-orders/:po_header_id/lines` gave you |
+| `lines[].po_release_id` | conditional | **Required** alongside `po_line_id`/`po_line_location_id` whenever that shipment belongs to a Blanket PO release (i.e. `GET /purchase-orders/:po_header_id/lines` returned a non-null `po_release_id` for it) - confirmed live, see the gotcha below |
 | `invoice_type` | no | defaults to `STANDARD`. See below - **not** every value works with just `vendor_id`/`vendor_site_id` |
 | `calc_tax_during_import` | no | boolean, maps to `calc_tax_during_import_flag`. Untested end-to-end - see the tax gotcha below |
 
@@ -626,42 +638,52 @@ Accounts uses for tax liability) pointed at the tax-payable account via
 `dist_code_combination_id`/`account` - rather than using `line_type: "TAX"`
 at all. This sidesteps the e-Business Tax engine entirely.
 
-**PO-matched lines (`po_line_id`/`po_line_location_id`) are also an
-unresolved gap.** `GET /purchase-orders` and `GET /purchase-orders/:id/lines`
-work fine for discovery, but actually creating a PO-matched invoice line does
-not. Seven different field combinations were tried live across two POs
-(Standard and Blanket types), surfacing four distinct errors that did not
-converge toward a working combination - later attempts sometimes regressed to
-an earlier error:
+**PO-matched lines (`po_line_id`/`po_line_location_id`) now work
+end-to-end - the fix was in the discovery data, not the code.** Seven
+attempts originally failed live across two POs, surfacing four distinct
+errors (`INVALID PO SHIPMENT NUM`, `INVALID PO RELEASE INFO`, `INVALID
+SHIPMENT TYPE`) that never converged. Reading the actual concurrent request
+log (`o<request_id>.txt` under the conc/out directory - not just
+`AP_INTERFACE_REJECTIONS`, which only stores the short lookup code) plus the
+underlying `po_line_locations_all` rows for the shipments used in each
+attempt explained all four:
 
-1. `po_line_id` + `po_line_location_id` (Blanket PO) → `INVALID PO SHIPMENT NUM`
-2. Same + `po_shipment_num` → same error
-3. Business keys instead (`po_number`+`po_line_number`+`po_shipment_num`,
-   Blanket PO) → `INVALID PO RELEASE INFO`
-4. Same business keys, Standard PO instead → `INVALID SHIPMENT TYPE` (even
-   though the shipment's own `shipment_type` column reads `'STANDARD'`)
-5. Same + `po_unit_of_measure` → same error
-6. Full internal IDs + business keys combined → `INVALID PO SHIPMENT NUM`
-   (regression to attempt 1's error)
-7. `po_line_location_id` alone (minimal shape) on the Standard PO → same
-   error as 6
+- Two of the test POs' shipments had `approved_flag` = `N` or `null` -
+  Payables rejects an unapproved shipment with `Invalid PO shipment number`,
+  which reads exactly like a bad ID even though the ID was correct.
+- One test PO's shipments were `shipment_type = 'PRICE BREAK'` (a Blanket
+  PO's own price-break tiers, not an invoiceable shipment) - invalid
+  regardless of approval status.
+- The business-key attempts (`po_number`+`po_line_number`+`po_shipment_num`)
+  landed on the wrong PO or the wrong shipment, because `po_number`
+  (`segment1`) is **not globally unique** - 10 different POs on the reference
+  instance share the same number.
+- The Blanket-PO business-key attempt additionally needed `po_release_id` -
+  a column that wasn't exposed by this API at all until now. A shipment that
+  belongs to a Blanket PO release (`po_line_locations_all.po_release_id` not
+  null) can't be matched by `po_line_id`/`po_line_location_id` alone.
 
-One confirmed real finding along the way: `po_number` (`segment1`) is **not**
-globally unique - 10 different POs on the reference instance share the same
-number, only disambiguated by org/vendor/header id. This likely explains why
-the business-key-only attempts kept resolving to unexpected records. Beyond
-that, converging on the right field combination needs the same kind of access
-the tax-line investigation was blocked on (log file or EBS functional
-expertise) - not something resolvable through further blind trial-and-error
-against this data alone. Treat PO-matched invoice lines as unsupported until
-revisited with better diagnostic access.
+None of this was a validation or field-mapping bug in this API - every
+attempt above would have succeeded against a genuinely approved, non-release
+shipment. `GET /purchase-orders/:po_header_id/lines` has been fixed to filter
+out exactly the traps above (`approved_flag = 'Y'`, `shipment_type` in the
+valid set) so a caller following that endpoint's output won't hit them again,
+and now returns `po_release_id` so release-based shipments are visible.
 
-All the fields tried above (`po_header_id`, `po_line_number`,
-`po_shipment_num`, `po_unit_of_measure`, `unit_price`, plus header-level
-`calc_tax_during_import`) are now exposed on `POST /invoices` even though no
-working combination has been found - real `AP_INVOICE_LINES_INTERFACE`
-columns, so whoever picks this up next can experiment through the API
-directly instead of adding fields to the wrapper first.
+Confirmed live with two real invoices:
+
+- **Plain Standard PO shipment** (no release): `po_line_id: 39835,
+  po_line_location_id: 78018, quantity_invoiced: 1, unit_price: 450,
+  po_unit_of_measure: "HRS"` → `interface_status: "PROCESSED"`,
+  `match_type: "ITEM_TO_PO"`, GL coding auto-derived from the PO as expected.
+- **Blanket PO release shipment**: same shape plus `po_release_id: 2868`
+  (taken from `GET /purchase-orders/:po_header_id/lines`'s `po_release_id`
+  for that shipment) → also `PROCESSED`.
+
+The only remaining real-world consideration if this gets picked up further:
+2-way vs 3-way match handling and partial-invoicing/remaining-quantity
+tracking across multiple invoices against the same PO line - not tested,
+since the mechanics of a single successful match are now proven.
 
 **A `request_id` can span far more than the one invoice you just staged.**
 Oracle's import run sweeps *every* still-eligible pending/rejected interface

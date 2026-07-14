@@ -109,15 +109,18 @@ function validateCreatePayload(body) {
         line.quantity_invoiced !== undefined && line.quantity_invoiced !== null
           ? Number(line.quantity_invoiced)
           : null,
-      // Additional PO-matching fields tried during the (unresolved) live
-      // investigation - see docs/api.md gotchas. Real AP_INVOICE_LINES_INTERFACE
-      // columns, exposed so the exact required combination can be
-      // experimented with through the API without a code change.
+      // Additional PO-matching fields - real AP_INVOICE_LINES_INTERFACE
+      // columns. po_release_id is required alongside po_line_id/
+      // po_line_location_id whenever the shipment belongs to a Blanket PO
+      // release (PO_LINE_LOCATIONS_ALL.po_release_id not null for that
+      // shipment) - confirmed live, see docs/api.md gotchas.
       po_header_id: line.po_header_id !== undefined && line.po_header_id !== null ? Number(line.po_header_id) : null,
       po_line_number:
         line.po_line_number !== undefined && line.po_line_number !== null ? Number(line.po_line_number) : null,
       po_shipment_num:
         line.po_shipment_num !== undefined && line.po_shipment_num !== null ? Number(line.po_shipment_num) : null,
+      po_release_id:
+        line.po_release_id !== undefined && line.po_release_id !== null ? Number(line.po_release_id) : null,
       po_unit_of_measure: line.po_unit_of_measure ?? null,
       unit_price: line.unit_price !== undefined && line.unit_price !== null ? Number(line.unit_price) : null,
       // Only relevant for line_type "TAX" - this instance uses Oracle's

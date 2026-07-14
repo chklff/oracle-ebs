@@ -162,22 +162,24 @@ const INSERT_HEADER = `
 // (see GET /purchase-orders/:po_header_id/lines); Oracle derives GL coding
 // from the PO itself for these, dist_code_combination_id stays null.
 // po_header_id/po_line_number/po_shipment_num/po_unit_of_measure/unit_price
-// are additional PO-matching fields tried during the (unresolved) live
-// investigation - see docs/api.md gotchas - exposed so the exact required
-// combination can be experimented with through the API without a code change.
+// are additional PO-matching fields - real AP_INVOICE_LINES_INTERFACE
+// columns, exposed so callers can pass what they have. po_release_id is
+// required in addition to po_line_id/po_line_location_id whenever the
+// shipment belongs to a Blanket PO release (PO_LINE_LOCATIONS_ALL.po_release_id
+// is not null for that shipment) - confirmed live, see docs/api.md gotchas.
 const INSERT_LINE = `
   INSERT INTO ap_invoice_lines_interface (
     invoice_id, invoice_line_id, line_number, line_type_lookup_code,
     amount, description, dist_code_combination_id, dist_code_concatenated,
     po_header_id, po_line_id, po_line_number, po_line_location_id,
-    po_shipment_num, po_unit_of_measure, unit_price, quantity_invoiced,
+    po_shipment_num, po_release_id, po_unit_of_measure, unit_price, quantity_invoiced,
     tax_regime_code, tax_status_code, tax_rate_code, tax_jurisdiction_code,
     tax_classification_code
   ) VALUES (
     :invoice_id, ap_invoice_lines_interface_s.NEXTVAL, :line_number, :line_type,
     :amount, :description, :dist_code_combination_id, :dist_code_concatenated,
     :po_header_id, :po_line_id, :po_line_number, :po_line_location_id,
-    :po_shipment_num, :po_unit_of_measure, :unit_price, :quantity_invoiced,
+    :po_shipment_num, :po_release_id, :po_unit_of_measure, :unit_price, :quantity_invoiced,
     :tax_regime_code, :tax_status_code, :tax_rate_code, :tax_jurisdiction_code,
     :tax_classification_code
   )`;
@@ -235,6 +237,7 @@ async function createInvoiceInterface(conn, payload, importSource) {
         po_line_number: line.po_line_number ?? null,
         po_line_location_id: line.po_line_location_id ?? null,
         po_shipment_num: line.po_shipment_num ?? null,
+        po_release_id: line.po_release_id ?? null,
         po_unit_of_measure: line.po_unit_of_measure ?? null,
         unit_price: line.unit_price ?? null,
         quantity_invoiced: line.quantity_invoiced ?? null,

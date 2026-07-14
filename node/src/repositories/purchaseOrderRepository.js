@@ -10,6 +10,14 @@
  * PO on the reference instance had 70+, mostly long since closed), so this
  * filters to ones still genuinely open to invoice rather than dumping
  * everything on the caller.
+ *
+ * approved_flag = 'Y' is a hard filter, not just informational: Payables
+ * rejects a PO-matched line against an unapproved shipment with
+ * "Invalid PO shipment number" - a misleading error that looks like a bad ID
+ * even when the id is entirely correct, confirmed live. po_release_id is
+ * returned (not filtered on) because Blanket PO releases are legitimate,
+ * commonly-used shipments - POST /invoices needs po_release_id passed
+ * alongside po_line_id/po_line_location_id whenever it's non-null here.
  */
 
 const LIST_PURCHASE_ORDERS = `
@@ -34,10 +42,13 @@ async function listPurchaseOrders(conn, { orgId, vendorId }) {
 const LIST_PURCHASE_ORDER_LINES = `
   SELECT pl.po_line_id            AS po_line_id,
          loc.line_location_id     AS po_line_location_id,
+         loc.po_release_id        AS po_release_id,
          pl.line_num              AS line_num,
          pl.item_description      AS item_description,
          pl.unit_price            AS unit_price,
+         pl.unit_meas_lookup_code AS unit_of_measure,
          loc.match_option         AS match_option,
+         loc.shipment_num         AS shipment_num,
          loc.quantity             AS quantity,
          loc.quantity_received    AS quantity_received,
          loc.quantity_billed      AS quantity_billed
@@ -46,6 +57,9 @@ const LIST_PURCHASE_ORDER_LINES = `
    WHERE pl.po_header_id = :po_header_id
      AND loc.closed_code = 'OPEN'
      AND NVL(loc.cancel_flag, 'N') != 'Y'
+     AND loc.approved_flag = 'Y'
+     AND NVL(loc.consigned_flag, 'N') != 'Y'
+     AND loc.shipment_type IN ('BLANKET', 'SCHEDULED', 'STANDARD', 'PREPAYMENT')
    ORDER BY pl.line_num, loc.line_location_id`;
 
 async function listPurchaseOrderLines(conn, poHeaderId) {
@@ -53,10 +67,15 @@ async function listPurchaseOrderLines(conn, poHeaderId) {
   return (result.rows || []).map((row) => ({
     po_line_id: row.PO_LINE_ID,
     po_line_location_id: row.PO_LINE_LOCATION_ID,
+    // Pass this straight back as lines[].po_release_id on POST /invoices
+    // whenever it's non-null - required for Blanket PO release shipments.
+    po_release_id: row.PO_RELEASE_ID,
     line_num: row.LINE_NUM,
     item_description: row.ITEM_DESCRIPTION,
     unit_price: row.UNIT_PRICE,
+    unit_of_measure: row.UNIT_OF_MEASURE,
     match_option: row.MATCH_OPTION,
+    shipment_num: row.SHIPMENT_NUM,
     quantity: row.QUANTITY,
     quantity_received: row.QUANTITY_RECEIVED,
     quantity_billed: row.QUANTITY_BILLED,
