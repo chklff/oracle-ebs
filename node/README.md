@@ -212,6 +212,8 @@ Do **not** expose it on `0.0.0.0` unless the network is already restricted.
 | `GET /vendor-sites?org_id=…&vendor_id=…` | secret | List a supplier's sites (to discover valid `vendor_site_id`, required by `POST /invoices`) |
 | `GET /terms` | secret | List payment terms (to discover valid `terms_id`) |
 | `GET /currencies` | secret | List enabled currencies (to discover valid `currency_code`) |
+| `GET /purchase-orders?org_id=…&vendor_id=…` | secret | List open POs for a vendor (to discover valid `po_header_id`, for PO-matched lines) |
+| `GET /purchase-orders/:po_header_id/lines` | secret | List a PO's invoiceable shipments (to discover valid `po_line_location_id`/`po_release_id`) |
 | `GET /invoices?org_id=…` | secret | Paginated invoice list for one operating unit |
 | `GET /invoices/:id` | secret | One invoice + its lines |
 | `GET /invoices/dff-schema` | secret | Column → label metadata for `custom_fields` (attribute1-15), per context |
@@ -395,7 +397,7 @@ src/
 ├── logger.js          structured logging (secret redacted)
 ├── errors.js          typed API errors
 ├── middleware/        auth (secret check) + error handler
-├── routes/            one file per resource: health, orgs, invoices
+├── routes/            one file per resource: health, orgs, vendors, terms, currencies, purchaseOrders, invoices
 ├── repositories/      ALL SQL lives here (bind variables only) — audit surface
 └── util/              input validation helpers
 scripts/

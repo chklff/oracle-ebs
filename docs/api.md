@@ -453,8 +453,17 @@ synchronously. You get back a `request_id` to poll.
 hardcoded enum here (same approach as `currency_code` - Oracle's own
 `AP_LOOKUP_CODES`, lookup_type `INVOICE TYPE`, is the source of truth).
 Verified working with normal `vendor_id`/`vendor_site_id`: `STANDARD`
-(default) and `CREDIT`; `DEBIT`/`MIXED`/`PREPAYMENT`/etc. are presumed to work
-the same way but untested.
+(default), `CREDIT`, and `DEBIT`. `MIXED`/`PREPAYMENT`/etc. are presumed to
+work the same way but untested.
+
+**`CREDIT` and `DEBIT` require a negative `invoice_amount` and negative
+`lines[].amount` - confirmed live.** A positive amount with `invoice_type:
+"DEBIT"` is rejected outright with `INCONSISTENT INV TYPE/AMT`; the same is
+true for `CREDIT`. This is fixed Oracle Payables behavior, not a per-instance
+quirk. This API itself does **not** normalise the sign (it stays a thin
+pass-through) - if you want callers to enter a plain positive number for a
+credit/debit memo, negate it on the client side (e.g. in the Make module's
+`buildInvoiceBody`) before sending.
 
 **`PAYMENT REQUEST` does *not* work with this endpoint as-is.** Tested against
 a live instance: submitting one with a normal `vendor_id`/`vendor_site_id`
@@ -523,15 +532,15 @@ is the specific staged row this call created - pass it to
 unambiguous outcome, since `request_id` alone can cover more than just your
 invoice once other pending/rejected rows exist for the same org+source.
 
-Each line requires either `dist_code_combination_id` (numeric code combination
-id) or `account` (a concatenated account string, mapped to
-`dist_code_concatenated`). Missing required fields → `400`.
+Each line is GL-coded (`dist_code_combination_id`, numeric code combination
+id, or `account`, a concatenated account string mapped to
+`dist_code_concatenated`), PO-matched (`po_line_location_id` +
+`quantity_invoiced` - see below), or a `TAX` line (unresolved, see the
+gotchas below) - exactly one shape, or `400`.
 
 ### Optional fields not shown in the example above
 
-The example is deliberately the minimal, **proven-working** shape. These
-fields are real and accepted, but experimental/unresolved (see the gotchas
-below before relying on them):
+**PO-matched lines - confirmed working end-to-end:**
 
 ```json
 {
@@ -540,37 +549,60 @@ below before relying on them):
   "invoice_date": "2026-07-01",
   "vendor_id": 2,
   "vendor_site_id": 2,
-  "invoice_amount": 500.00,
+  "invoice_amount": 450.00,
   "currency_code": "USD",
-  "invoice_type": "CREDIT",
-  "calc_tax_during_import": true,
   "lines": [
     {
-      "amount": 500.00,
-      "po_header_id": 5181,
-      "po_line_id": 5189,
-      "po_line_number": 1,
-      "po_line_location_id": 5420,
-      "po_shipment_num": 1,
-      "po_unit_of_measure": "Each",
-      "unit_price": 100.00,
-      "quantity_invoiced": 5
+      "amount": 450.00,
+      "po_line_location_id": 78018,
+      "quantity_invoiced": 1
     }
   ]
 }
 ```
 
-- `invoice_type` - confirmed working: `STANDARD` (default), `CREDIT`. Not confirmed: anything else.
-- `calc_tax_during_import` - untested end-to-end.
-- The PO-matched line shape above (replaces `dist_code_combination_id`/`account`) - untested end-to-end, no known-working field combination yet.
+`po_line_location_id` + `quantity_invoiced` is the whole shape needed for a
+plain PO shipment - Oracle derives `po_header_id`/`po_line_id`/GL coding
+itself. Get `po_line_location_id` from
+`GET /purchase-orders/:po_header_id/lines`. Add `po_release_id` (also
+returned by that endpoint) only when it's non-null for that shipment - see
+the gotchas below. `po_line_id`/`po_header_id`/`po_line_number`/
+`po_shipment_num`/`po_unit_of_measure`/`unit_price` are accepted but not
+required.
 
-A `TAX`-type line looks like this (also untested end-to-end):
+**`CREDIT`/`DEBIT` - confirmed working, but the amount sign matters:**
+
+```json
+{
+  "org_id": 204,
+  "invoice_num": "INV-1003",
+  "invoice_date": "2026-07-01",
+  "vendor_id": 2,
+  "vendor_site_id": 2,
+  "invoice_amount": -50.00,
+  "currency_code": "USD",
+  "invoice_type": "CREDIT",
+  "lines": [{ "amount": -50.00, "dist_code_combination_id": 12975 }]
+}
+```
+
+See the `invoice_type` note above the example - both header and line amounts
+must be negative, or Oracle rejects it with `INCONSISTENT INV TYPE/AMT`.
+
+**Still unresolved/experimental (see the gotchas below before relying on
+these):**
+
+- `calc_tax_during_import` - untested end-to-end.
+- `TAX`-type lines - do not work, see below. Use the documented workaround
+  instead.
+
+A `TAX`-type line looks like this (still rejected by Oracle - do not use,
+see the gotcha below for why and the recommended workaround):
 
 ```json
 {
   "amount": 42.50,
   "line_type": "TAX",
-  "dist_code_combination_id": 12975,
   "tax_regime_code": "US-SALES-TAX-101",
   "tax_status_code": "STANDARD",
   "tax_rate_code": "STANDARD",
@@ -578,6 +610,10 @@ A `TAX`-type line looks like this (also untested end-to-end):
   "tax_classification_code": "STD"
 }
 ```
+
+(Note: a `TAX` line cannot also carry `dist_code_combination_id`/`account`/
+`po_line_location_id` - `POST /invoices` rejects a line that's more than one
+of GL-coded/PO-matched/TAX at once.)
 
 ### Gotchas (found the hard way, against a real instance)
 
