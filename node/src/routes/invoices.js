@@ -46,18 +46,22 @@ function validateCreatePayload(body) {
       if (!Number.isFinite(Number(line.amount))) {
         errors.push(`lines[${idx}].amount is required and must be a number`);
       }
-      // A line is either GL-coded (dist_code_combination_id/account) or
-      // PO-matched (po_line_location_id + quantity_invoiced) - mutually
-      // exclusive, exactly one shape required. po_line_location_id alone is
-      // sufficient - Oracle derives po_header_id/po_line_id itself from the
+      // A line is GL-coded (dist_code_combination_id/account), PO-matched
+      // (po_line_location_id + quantity_invoiced), or a TAX line
+      // (line_type "TAX", using tax_regime_code/tax_status_code/etc instead
+      // of an account or a PO) - mutually exclusive, exactly one shape
+      // required. po_line_location_id alone is sufficient for a PO-matched
+      // line - Oracle derives po_header_id/po_line_id itself from the
       // shipment - confirmed live. po_line_id is accepted but not required.
       const isGlCoded = line.dist_code_combination_id !== undefined || !!line.account;
       const isPoMatched = line.po_line_location_id !== undefined;
-      if (isGlCoded && isPoMatched) {
-        errors.push(`lines[${idx}] cannot be both GL-coded and PO-matched - pick one`);
-      } else if (!isGlCoded && !isPoMatched) {
+      const isTaxLine = line.line_type === 'TAX';
+      const shapeCount = [isGlCoded, isPoMatched, isTaxLine].filter(Boolean).length;
+      if (shapeCount > 1) {
+        errors.push(`lines[${idx}] must be exactly one of GL-coded, PO-matched, or a TAX line - pick one`);
+      } else if (shapeCount === 0) {
         errors.push(
-          `lines[${idx}] requires dist_code_combination_id or account, or po_line_location_id`,
+          `lines[${idx}] requires dist_code_combination_id or account, or po_line_location_id, or line_type "TAX"`,
         );
       } else if (isPoMatched && !Number.isFinite(Number(line.quantity_invoiced))) {
         errors.push(`lines[${idx}].quantity_invoiced is required and must be a number for a PO-matched line`);

@@ -150,7 +150,45 @@ describe('POST /invoices', () => {
       })
       .expect(400);
     expect(res.body.details).toEqual(
-      expect.arrayContaining([expect.stringMatching(/cannot be both GL-coded and PO-matched/)]),
+      expect.arrayContaining([expect.stringMatching(/must be exactly one of GL-coded, PO-matched, or a TAX line/)]),
+    );
+  });
+
+  test('accepts a TAX-type line with no dist_code_combination_id/account/po_line_location_id', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ outBinds: { out_invoice_id: [777] } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ outBinds: { request_id: 8675309 } });
+    await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({
+        ...validBody,
+        lines: [
+          {
+            amount: 6.5,
+            line_type: 'TAX',
+            tax_regime_code: 'US-SALES-TAX-101',
+            tax_status_code: 'STANDARD',
+            tax_rate_code: 'STANDARD',
+            tax_jurisdiction_code: 'ST-WA-121720',
+          },
+        ],
+      })
+      .expect(202);
+  });
+
+  test('400 when a TAX-type line is also GL-coded', async () => {
+    const res = await request(app)
+      .post('/invoices')
+      .set(AUTH_HEADER)
+      .send({
+        ...validBody,
+        lines: [{ amount: 10, line_type: 'TAX', dist_code_combination_id: 55501, tax_regime_code: 'US-SALES' }],
+      })
+      .expect(400);
+    expect(res.body.details).toEqual(
+      expect.arrayContaining([expect.stringMatching(/must be exactly one of GL-coded, PO-matched, or a TAX line/)]),
     );
   });
 

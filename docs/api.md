@@ -608,31 +608,44 @@ whitespace - `" FOO "` staged can land as `" FOO"` in `ap_invoices_all`, an
 inconsistency this API works around internally (see the next section) but
 that's worth knowing if you're ever comparing invoice numbers yourself.
 
-**`TAX`-type lines are an unresolved gap - don't rely on them yet.** This
-instance uses Oracle's modern e-Business Tax engine (`tax_regime_code`/
+**`TAX`-type lines are a confirmed, unresolved gap - don't rely on them.**
+This instance uses Oracle's modern e-Business Tax engine (`tax_regime_code`/
 `tax_status_code`/`tax_rate_code`/`tax_jurisdiction_code`, not a legacy flat
-tax code), and three different approaches were tried against a live invoice
-and all failed:
+tax code). Six different approaches were tried live across two sessions and
+none succeeded:
 1. A manual `TAX` line with regime/status/rate but no jurisdiction →
    `ZX_TAX_RATE_ID_CODE_MISSING` (rates vary by jurisdiction, so this one's
    expected).
 2. The exact same manual `TAX` line, but with jurisdiction/rate/effective-date
    values copied directly from a real, already-succeeded tax line on this org
-   → the *same* `ZX_TAX_RATE_ID_CODE_MISSING` error, for a reason not
-   identified.
+   → the *same* `ZX_TAX_RATE_ID_CODE_MISSING` error.
 3. `CALC_TAX_DURING_IMPORT_FLAG = 'Y'` on the header with a
    `tax_classification_code` on the `ITEM` line instead (letting Oracle's tax
-   engine auto-derive and create the tax line itself, which is how the real
-   line's populated `SUMMARY_TAX_LINE_ID` suggests it was actually created) →
-   rejected with **no reason logged at all** in `AP_INTERFACE_REJECTIONS`,
-   meaning the failure happens below what's visible through data alone.
+   engine auto-derive and create the tax line itself) → rejected with **no
+   reason logged at all** in `AP_INTERFACE_REJECTIONS`.
+4. Same as #2, but this time verified live that the copied rate
+   (`tax_rate_id`) is genuinely valid, unambiguous, and effective-dated to
+   cover the invoice date (checked `zx_rates_b` directly) → still the same
+   `ZX_TAX_RATE_ID_CODE_MISSING`.
+5. Populating the raw `tax_rate_id` directly on the interface line instead of
+   the code fields → a *different* error this time: `INSUFFICIENT TAX INFO`
+   ("Tax Classification Code or Tax Rate Code is mandatory for manual tax
+   lines").
+6. `tax_rate_id` **and** all four code fields together (the exact values from
+   attempt 4) → regressed back to attempt 1/2/4's `ZX_TAX_RATE_ID_CODE_MISSING`.
 
-Diagnosing further needs either the concurrent request's own log file
-(permission-denied for the service account used here) or EBS Tax Manager
-functional expertise on this instance's Tax Determination rules/Configuration
-Owner Tax Options/Party Tax Profiles - none of which are discoverable through
-SQL alone. **Recommended workaround:** if the tax amount is already known
-(not something Oracle needs to calculate/validate), book it as a normal
+The technique that resolved the PO-matching gap (reading the concurrent
+request's actual output report on the app tier, not just
+`AP_INTERFACE_REJECTIONS`) was tried here too and did **not** help - Oracle's
+e-Business Tax engine doesn't log more detail into that report than the short
+rejection code, unlike Purchasing. Combined with attempt 6's regression
+(adding more, individually-correct fields made it fail the *same* way as
+having fewer), this isn't a missing-field problem solvable by more
+trial-and-error against this data. Diagnosing further genuinely needs EBS Tax
+Manager functional expertise on this instance's Tax Determination rules/
+Configuration Owner Tax Options/Party Tax Profiles - not discoverable through
+SQL or logs alone. **Recommended workaround:** if the tax amount is already
+known (not something Oracle needs to calculate/validate), book it as a normal
 GL-coded line - `line_type: "ITEM"` (or a dedicated type your Chart of
 Accounts uses for tax liability) pointed at the tax-payable account via
 `dist_code_combination_id`/`account` - rather than using `line_type: "TAX"`
