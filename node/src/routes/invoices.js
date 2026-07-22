@@ -5,8 +5,77 @@ const db = require('../db');
 const invoiceRepository = require('../repositories/invoiceRepository');
 const importRepository = require('../repositories/importRepository');
 const dffRepository = require('../repositories/dffRepository');
-const { badRequest, notFound } = require('../errors');
+const cancelRepository = require('../repositories/cancelRepository');
+const { badRequest, notFound, conflict, unprocessable } = require('../errors');
 const { toInt, requireInt, toDate } = require('../util/validation');
+
+// Fields Oracle has no supported in-place update path for once an invoice
+// exists - anything that touches invoice_amount, distributions, scheduled
+// payments, or the tax engine. See docs/api.md "PATCH /invoices/:id" for why:
+// AP_INVOICES_ALL.APPROVAL_STATUS/POSTING_STATUS are unreliable/NULL on this
+// instance and real invoices are typically already validated+posted+paid by
+// the time anyone would want to edit them, at which point Oracle's own
+// supported path is cancel + recreate, not edit.
+const LOCKED_UPDATE_FIELDS = [
+  'invoice_amount', 'terms_id', 'lines', 'vendor_id', 'vendor_site_id',
+  'currency_code', 'invoice_date', 'invoice_num', 'invoice_type',
+];
+
+const CUSTOM_FIELD_KEYS = ['attribute_category', ...Array.from({ length: 15 }, (_, i) => `attribute${i + 1}`)];
+
+/**
+ * Validate and normalise the PATCH /invoices/:id body. Only description and
+ * custom_fields (attribute_category/attribute1-15) are accepted - these are
+ * the only header fields safe to edit unconditionally regardless of
+ * validation/posting/payment status (see docs/api.md). Everything else is
+ * rejected with a pointer to cancel-and-recreate.
+ */
+function validateUpdatePayload(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw badRequest('Request body must be a JSON object');
+  }
+
+  const errors = [];
+  const fields = {};
+
+  const lockedFieldsPresent = LOCKED_UPDATE_FIELDS.filter((f) => body[f] !== undefined);
+  if (lockedFieldsPresent.length > 0) {
+    errors.push(
+      `${lockedFieldsPresent.join(', ')} cannot be changed on an existing invoice - Oracle has no supported `
+        + 'in-place update path for financial fields once an invoice may be validated/posted/paid. Cancel the '
+        + 'invoice in Oracle Payables and create a corrected one via POST /invoices instead.',
+    );
+  }
+
+  if (body.description !== undefined) {
+    fields.description = body.description === null ? null : String(body.description);
+  }
+
+  if (body.custom_fields !== undefined) {
+    if (typeof body.custom_fields !== 'object' || body.custom_fields === null || Array.isArray(body.custom_fields)) {
+      errors.push('custom_fields must be an object');
+    } else {
+      const unknownKeys = Object.keys(body.custom_fields).filter((k) => !CUSTOM_FIELD_KEYS.includes(k));
+      if (unknownKeys.length > 0) {
+        errors.push(`custom_fields has unknown keys: ${unknownKeys.join(', ')} (allowed: ${CUSTOM_FIELD_KEYS.join(', ')})`);
+      }
+      for (const key of CUSTOM_FIELD_KEYS) {
+        if (body.custom_fields[key] !== undefined) {
+          const value = body.custom_fields[key];
+          fields[key] = value === null ? null : String(value);
+        }
+      }
+    }
+  }
+
+  if (errors.length === 0 && Object.keys(fields).length === 0) {
+    errors.push('At least one of description or custom_fields must be provided');
+  }
+
+  if (errors.length > 0) throw badRequest('Validation failed', errors);
+
+  return fields;
+}
 
 /**
  * Validate and normalise the POST /invoices body. Throws a 400 ApiError with a
@@ -229,6 +298,102 @@ module.exports = function invoicesRouter(config) {
     }
   });
 
+  // PATCH /invoices/:id - update description/custom_fields in place. This is
+  // deliberately the ONLY editable surface: direct UPDATE against
+  // ap_invoices_all, guarded on the invoice existing and not being cancelled.
+  // Anything financial (amount/terms/lines) is rejected - see
+  // validateUpdatePayload and docs/api.md for why.
+  router.patch('/invoices/:id', async (req, res, next) => {
+    try {
+      const invoiceId = requireInt(req.params.id, 'id');
+      const fields = validateUpdatePayload(req.body);
+
+      const updated = await db.withConnection(async (conn) => {
+        const state = await invoiceRepository.getCancellationState(conn, invoiceId);
+        if (!state.exists) throw notFound('Invoice not found');
+        if (state.cancelled) throw conflict('Invoice is cancelled and cannot be updated');
+
+        await invoiceRepository.updateInvoiceHeaderFields(conn, invoiceId, fields);
+
+        const found = await invoiceRepository.getInvoiceById(conn, invoiceId);
+        found.lines = await invoiceRepository.getInvoiceLines(conn, invoiceId);
+        return found;
+      });
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // POST /invoices/:id/cancel - the supported path for anything PATCH rejects
+  // (amount/terms/lines once an invoice may be validated/posted/paid). Uses
+  // Oracle's own AP_CANCEL_PKG, not direct SQL - see cancelRepository.js.
+  // This is NOT reversible: Oracle has no "un-cancel". The follow-up
+  // corrected invoice is a separate POST /invoices call, by design (this
+  // endpoint only cancels, it never creates a replacement itself).
+  router.post('/invoices/:id/cancel', async (req, res, next) => {
+    try {
+      const invoiceId = requireInt(req.params.id, 'id');
+      const accountingDate = toDate(req.body?.accounting_date, 'accounting_date');
+
+      const result = await db.withConnection(async (conn) => {
+        const state = await cancelRepository.getCancellableState(conn, invoiceId);
+        if (!state.exists) throw notFound('Invoice not found');
+        if (state.cancelled) throw conflict('Invoice is already cancelled');
+
+        const check = await cancelRepository.checkCancellable(conn, {
+          invoiceId,
+          orgId: state.orgId,
+          appsUserId: config.import.appsUserId,
+          responsibilityId: config.import.responsibilityId,
+          responsibilityApplId: config.import.responsibilityApplId,
+        });
+        if (!check.cancellable) {
+          throw unprocessable('Invoice cannot be cancelled', [check.errorCode || 'Unknown reason']);
+        }
+
+        // AP_CANCEL_SINGLE_INVOICE can itself raise an unhandled Oracle
+        // application error (ORA-20001 etc) for invoice-specific data issues
+        // it cannot cleanly recover from (confirmed live: a real invoice
+        // failed here with "Error encountered while synchronizing tax
+        // distributions... Generate APLIST for this invoice and log a
+        // Service Request" - an Oracle-side data problem with that specific
+        // invoice, not something this API can fix). Surface it as a 422 with
+        // the real ORA message instead of letting it bubble up as an opaque
+        // 500 - the caller at least learns it's a genuine Oracle-side issue.
+        let cancelResult;
+        try {
+          cancelResult = await cancelRepository.cancelInvoice(conn, {
+            invoiceId,
+            orgId: state.orgId,
+            accountingDate,
+            appsUserId: config.import.appsUserId,
+            responsibilityId: config.import.responsibilityId,
+            responsibilityApplId: config.import.responsibilityApplId,
+          });
+        } catch (oracleErr) {
+          throw unprocessable('Cancellation failed', [oracleErr.message]);
+        }
+
+        if (!cancelResult.success) {
+          throw unprocessable('Cancellation failed', [cancelResult.messageName || 'Unknown reason']);
+        }
+
+        const invoice = await invoiceRepository.getInvoiceById(conn, invoiceId);
+        invoice.lines = await invoiceRepository.getInvoiceLines(conn, invoiceId);
+        invoice.cancelled = true;
+        invoice.cancelled_amount = cancelResult.cancelledAmount;
+        invoice.cancelled_date = cancelResult.cancelledDate;
+        return invoice;
+      });
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // POST /invoices - stage into the interface tables and submit the import.
   router.post('/invoices', async (req, res, next) => {
     try {
@@ -262,3 +427,4 @@ module.exports = function invoicesRouter(config) {
 };
 
 module.exports.validateCreatePayload = validateCreatePayload;
+module.exports.validateUpdatePayload = validateUpdatePayload;

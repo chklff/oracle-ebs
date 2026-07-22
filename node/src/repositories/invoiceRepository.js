@@ -20,6 +20,7 @@ const CORE_COLUMNS = `
   i.payment_status_flag                AS payment_status_flag,
   i.invoice_type_lookup_code           AS invoice_type,
   i.org_id                             AS org_id,
+  i.description                        AS description,
   i.attribute_category                 AS attribute_category,
   i.attribute1, i.attribute2, i.attribute3, i.attribute4, i.attribute5,
   i.attribute6, i.attribute7, i.attribute8, i.attribute9, i.attribute10,
@@ -42,6 +43,7 @@ function mapInvoice(row) {
     payment_status_flag: row.PAYMENT_STATUS_FLAG,
     invoice_type: row.INVOICE_TYPE,
     org_id: row.ORG_ID,
+    description: row.DESCRIPTION ?? null,
     custom_fields: customFields,
   };
 }
@@ -256,11 +258,67 @@ async function createInvoiceInterface(conn, payload, importSource) {
   return invoiceId;
 }
 
+// Only these fields are safe to edit in place at any invoice status: they are
+// pure header metadata and never touch invoice_amount, distributions, scheduled
+// payments, or the tax engine. See docs/api.md "PATCH /invoices/:id" for the
+// reasoning (validated/posted/paid invoices lock down anything financial - the
+// research behind this only found description/DFF attributes safe unconditionally).
+const GET_CANCELLATION_STATE = `
+  SELECT invoice_id, cancelled_date
+    FROM ap_invoices_all
+   WHERE invoice_id = :invoice_id`;
+
+/**
+ * @returns {Promise<{exists: boolean, cancelled: boolean}>}
+ */
+async function getCancellationState(conn, invoiceId) {
+  const result = await conn.execute(GET_CANCELLATION_STATE, { invoice_id: invoiceId });
+  if (!result.rows || result.rows.length === 0) return { exists: false, cancelled: false };
+  return { exists: true, cancelled: result.rows[0].CANCELLED_DATE != null };
+}
+
+/**
+ * Update only the header's non-financial fields (description, DFF attributes).
+ * Caller must have already confirmed the invoice exists and is not cancelled -
+ * this function does not re-check status, it only writes the columns given.
+ * `fields` is a sparse object; only keys present in it are updated, so a caller
+ * that only sends `description` leaves every attribute1-15 untouched.
+ * @returns {Promise<void>}
+ */
+async function updateInvoiceHeaderFields(conn, invoiceId, fields) {
+  const setClauses = [];
+  const binds = { invoice_id: invoiceId };
+
+  if (Object.prototype.hasOwnProperty.call(fields, 'description')) {
+    setClauses.push('description = :description');
+    binds.description = fields.description;
+  }
+  if (Object.prototype.hasOwnProperty.call(fields, 'attribute_category')) {
+    setClauses.push('attribute_category = :attribute_category');
+    binds.attribute_category = fields.attribute_category;
+  }
+  for (let i = 1; i <= 15; i += 1) {
+    const key = `attribute${i}`;
+    if (Object.prototype.hasOwnProperty.call(fields, key)) {
+      setClauses.push(`${key} = :${key}`);
+      binds[key] = fields[key];
+    }
+  }
+
+  if (setClauses.length === 0) return; // nothing to do
+
+  setClauses.push('last_update_date = SYSDATE');
+  const sql = `UPDATE ap_invoices_all SET ${setClauses.join(', ')} WHERE invoice_id = :invoice_id`;
+  await conn.execute(sql, binds, { autoCommit: true });
+}
+
 module.exports = {
   listInvoices,
   getInvoiceById,
   getInvoiceLines,
   createInvoiceInterface,
+  getCancellationState,
+  updateInvoiceHeaderFields,
   mapInvoice,
   mapLine,
 };

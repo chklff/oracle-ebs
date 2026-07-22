@@ -8,7 +8,9 @@ jest.mock('../src/db', () => ({
   getPool: jest.fn(),
   healthCheck: jest.fn(),
   withConnection: (fn) => fn({ execute: (...args) => mockExecute(...args) }),
-  oracledb: { BIND_OUT: 3003, NUMBER: 2010 },
+  oracledb: {
+    BIND_OUT: 3003, BIND_INOUT: 3002, NUMBER: 2010, STRING: 2001, DATE: 2003,
+  },
 }));
 
 const request = require('supertest');
@@ -107,6 +109,193 @@ describe('GET /invoices/:id', () => {
     mockExecute.mockResolvedValueOnce({ rows: [] });
     const res = await request(app).get('/invoices/99999').set(AUTH_HEADER).expect(404);
     expect(res.body.error).toMatch(/not found/i);
+  });
+});
+
+describe('PATCH /invoices/:id', () => {
+  test('401 without the client secret', async () => {
+    await request(app).patch('/invoices/12345').send({ description: 'x' }).expect(401);
+  });
+
+  test('400 when body has no editable field', async () => {
+    // Validation fails before any DB call is made - no mock needed here.
+    const res = await request(app).patch('/invoices/12345').set(AUTH_HEADER).send({}).expect(400);
+    expect(res.body.details).toEqual(
+      expect.arrayContaining([expect.stringMatching(/at least one of description or custom_fields/i)]),
+    );
+  });
+
+  // Regression test: found live against the real Vision instance - a caller
+  // (Make's HTTP connector) sent a perfectly valid JSON body but without a
+  // Content-Type: application/json header (defaulted elsewhere to
+  // application/x-www-form-urlencoded). express.json() used to silently skip
+  // parsing in that case, leaving req.body as {} and producing a confusing
+  // "no fields provided" 400 despite a correct payload on the wire. app.js
+  // now parses every body as JSON regardless of Content-Type.
+  test('parses a valid JSON body even without a Content-Type: application/json header', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, CANCELLED_DATE: null }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [sampleRow({ INVOICE_ID: 12345 })] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .patch('/invoices/12345')
+      .set(AUTH_HEADER)
+      .type('form') // sets Content-Type: application/x-www-form-urlencoded
+      .send(JSON.stringify({ description: 'no content-type header' }))
+      .expect(200);
+
+    expect(res.body.invoice_id).toBe(12345);
+    const [, updateBinds] = mockExecute.mock.calls[1];
+    expect(updateBinds).toEqual(expect.objectContaining({ description: 'no content-type header' }));
+  });
+
+  test('400 and points to cancel-and-recreate when a financial field is sent', async () => {
+    const res = await request(app)
+      .patch('/invoices/12345')
+      .set(AUTH_HEADER)
+      .send({ invoice_amount: 999 })
+      .expect(400);
+    expect(res.body.details).toEqual(
+      expect.arrayContaining([expect.stringMatching(/invoice_amount.*cannot be changed/i)]),
+    );
+  });
+
+  test('400 on an unknown custom_fields key', async () => {
+    const res = await request(app)
+      .patch('/invoices/12345')
+      .set(AUTH_HEADER)
+      .send({ custom_fields: { not_a_real_attribute: 'x' } })
+      .expect(400);
+    expect(res.body.details).toEqual(expect.arrayContaining([expect.stringMatching(/unknown keys/i)]));
+  });
+
+  test('404 when the invoice does not exist', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [] });
+    await request(app)
+      .patch('/invoices/99999')
+      .set(AUTH_HEADER)
+      .send({ description: 'new description' })
+      .expect(404);
+  });
+
+  test('409 when the invoice is cancelled', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, CANCELLED_DATE: '2020-01-01' }] });
+    const res = await request(app)
+      .patch('/invoices/12345')
+      .set(AUTH_HEADER)
+      .send({ description: 'new description' })
+      .expect(409);
+    expect(res.body.error).toMatch(/cancelled/i);
+  });
+
+  test('updates description and returns the refreshed invoice', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, CANCELLED_DATE: null }] }) // getCancellationState
+      .mockResolvedValueOnce({}) // UPDATE
+      .mockResolvedValueOnce({ rows: [sampleRow({ INVOICE_ID: 12345 })] }) // getInvoiceById
+      .mockResolvedValueOnce({ rows: [] }); // getInvoiceLines
+
+    const res = await request(app)
+      .patch('/invoices/12345')
+      .set(AUTH_HEADER)
+      .send({ description: 'new description', custom_fields: { attribute1: 'PO-99' } })
+      .expect(200);
+
+    expect(res.body.invoice_id).toBe(12345);
+    const [updateSql, updateBinds] = mockExecute.mock.calls[1];
+    expect(updateSql).toMatch(/UPDATE ap_invoices_all/);
+    expect(updateBinds).toEqual(
+      expect.objectContaining({ invoice_id: 12345, description: 'new description', attribute1: 'PO-99' }),
+    );
+  });
+
+  test('only updates the fields provided, leaving others out of the SET clause', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, CANCELLED_DATE: null }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [sampleRow({ INVOICE_ID: 12345 })] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await request(app)
+      .patch('/invoices/12345')
+      .set(AUTH_HEADER)
+      .send({ description: 'only description' })
+      .expect(200);
+
+    const [updateSql, updateBinds] = mockExecute.mock.calls[1];
+    expect(updateSql).not.toMatch(/attribute1 =/);
+    expect(updateBinds).not.toHaveProperty('attribute1');
+  });
+});
+
+describe('POST /invoices/:id/cancel', () => {
+  test('401 without the client secret', async () => {
+    await request(app).post('/invoices/12345/cancel').expect(401);
+  });
+
+  test('404 when the invoice does not exist', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [] });
+    await request(app).post('/invoices/99999/cancel').set(AUTH_HEADER).expect(404);
+  });
+
+  test('409 when the invoice is already cancelled', async () => {
+    mockExecute.mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, ORG_ID: 101, CANCELLED_DATE: '2020-01-01' }] });
+    const res = await request(app).post('/invoices/12345/cancel').set(AUTH_HEADER).expect(409);
+    expect(res.body.error).toMatch(/already cancelled/i);
+  });
+
+  test('422 when Oracle reports the invoice is not cancellable', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, ORG_ID: 101, CANCELLED_DATE: null }] }) // getCancellableState
+      .mockResolvedValueOnce({ outBinds: { cancellable: 0, error_code: 'AP_INVOICE_ALREADY_PAID' } }); // checkCancellable
+
+    const res = await request(app).post('/invoices/12345/cancel').set(AUTH_HEADER).expect(422);
+    expect(res.body.details).toEqual(expect.arrayContaining(['AP_INVOICE_ALREADY_PAID']));
+  });
+
+  test('422 when AP_CANCEL_SINGLE_INVOICE itself reports failure', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, ORG_ID: 101, CANCELLED_DATE: null }] })
+      .mockResolvedValueOnce({ outBinds: { cancellable: 1, error_code: null } })
+      .mockResolvedValueOnce({ outBinds: { success: 0, message_name: 'AP_CANCEL_FAILED', cancelled_amount: null, cancelled_date: null } });
+
+    const res = await request(app).post('/invoices/12345/cancel').set(AUTH_HEADER).expect(422);
+    expect(res.body.details).toEqual(expect.arrayContaining(['AP_CANCEL_FAILED']));
+  });
+
+  test('422 (not a 500) when AP_CANCEL_SINGLE_INVOICE itself throws an Oracle error', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, ORG_ID: 101, CANCELLED_DATE: null }] })
+      .mockResolvedValueOnce({ outBinds: { cancellable: 1, error_code: null } })
+      .mockRejectedValueOnce(new Error('ORA-20001: APP-SQLAP-4667484: Error encountered while synchronizing tax distributions'));
+
+    const res = await request(app).post('/invoices/12345/cancel').set(AUTH_HEADER).expect(422);
+    expect(res.body.details).toEqual(
+      expect.arrayContaining([expect.stringMatching(/ORA-20001/)]),
+    );
+  });
+
+  test('cancels the invoice and returns it with cancelled metadata', async () => {
+    mockExecute
+      .mockResolvedValueOnce({ rows: [{ INVOICE_ID: 12345, ORG_ID: 101, CANCELLED_DATE: null }] })
+      .mockResolvedValueOnce({ outBinds: { cancellable: 1, error_code: null } })
+      .mockResolvedValueOnce({
+        outBinds: {
+          success: 1, message_name: null, cancelled_amount: 1500, cancelled_date: new Date('2026-07-15'),
+        },
+      })
+      .mockResolvedValueOnce({ rows: [sampleRow({ INVOICE_ID: 12345, INVOICE_AMOUNT: 0 })] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post('/invoices/12345/cancel').set(AUTH_HEADER).expect(200);
+    expect(res.body).toMatchObject({
+      invoice_id: 12345,
+      cancelled: true,
+      cancelled_amount: 1500,
+      cancelled_date: '2026-07-15',
+    });
   });
 });
 

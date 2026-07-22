@@ -34,6 +34,19 @@ Validation errors may include a `details` array:
 { "error": "Validation failed", "details": ["invoice_num is required"] }
 ```
 
+Every `POST`/`PATCH` body is parsed as JSON **regardless of the request's
+`Content-Type` header** - you do not need to set
+`Content-Type: application/json` for the server to accept it (though you
+still can). This was a deliberate fix after a real integration (a Make.com
+HTTP connector) sent a perfectly valid JSON body with no `Content-Type`
+header at all (defaulting elsewhere to
+`application/x-www-form-urlencoded`); a stock Express app silently drops an
+unrecognised Content-Type's body, producing a confusing "no fields
+provided"/"required field missing" `400` even though the payload on the wire
+was correct. If you ever see that kind of 400 despite a payload that looks
+right, check what `Content-Type` your HTTP client actually sent - this server
+tolerates it either way, but not every proxy in front of it will.
+
 ---
 
 ## GET /health
@@ -404,6 +417,7 @@ curl $BASE_URL/invoices/12345 \
   "payment_status_flag": "N",
   "invoice_type": "STANDARD",
   "org_id": 101,
+  "description": "Consulting services, June",
   "custom_fields": { "attribute_category": null, "attribute1": "PO-42" },
   "lines": [
     {
@@ -418,6 +432,138 @@ curl $BASE_URL/invoices/12345 \
 ```
 
 Unknown id → `404`.
+
+Note: this does not currently return `cancelled`/`cancelled_date`/`cancelled_amount` -
+those only appear in the response of `POST /invoices/:id/cancel` itself. A
+cancelled invoice reads back here with `invoice_amount: 0` as the only visible
+clue on a plain `GET`.
+
+---
+
+## PATCH /invoices/:id
+
+Update an existing invoice **in place**, synchronously (no Open Interface, no
+concurrent program - this is a direct, guarded `UPDATE` against
+`ap_invoices_all`).
+
+Oracle has no supported "edit" API for AP invoices analogous to the create-side
+Open Interface, and once an invoice is validated/posted/paid its financial
+fields (amount, terms, lines) are effectively frozen - the only Oracle-blessed
+path for those is cancel + recreate. So this endpoint deliberately only allows
+the two things that are safe to change **regardless of status** - confirmed
+live against a real, fully paid/posted/validated invoice on this instance:
+
+| Field | Notes |
+|-------|-------|
+| `description` | string or `null` |
+| `custom_fields.attribute_category` / `custom_fields.attribute1-15` | DFF columns, string or `null` - same shape as `GET`/`POST /invoices` |
+
+Only the fields you send are changed - anything omitted is left untouched.
+At least one of `description`/`custom_fields` is required.
+
+```bash
+curl -X PATCH $BASE_URL/invoices/145330 \
+  -H "X-Client-Secret: $CLIENT_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Corrected description",
+    "custom_fields": { "attribute1": "PO-42" }
+  }'
+```
+
+Returns the refreshed invoice (same shape as `GET /invoices/:id`, including
+`lines`).
+
+**Rejected, on purpose:** `invoice_amount`, `terms_id`, `lines`, `vendor_id`,
+`vendor_site_id`, `currency_code`, `invoice_date`, `invoice_num`,
+`invoice_type` - sending any of these is a `400` explaining that Oracle has no
+supported in-place path for them; cancel the invoice in Oracle Payables and
+submit a corrected one via `POST /invoices` instead.
+
+| Status | Meaning |
+|--------|---------|
+| `400` | body has none of the two editable fields, an unknown `custom_fields` key, or a rejected financial field |
+| `404` | invoice_id does not exist |
+| `409` | invoice is cancelled (`cancelled_date` is not null) |
+
+### Why so narrow (researched, not guessed)
+
+Live inspection of this instance's `ap_invoices_all` found the "status"
+columns you'd expect to gate an update on are mostly unusable:
+`APPROVAL_STATUS` (validation) is **NULL on 100% of rows** - the real value is
+only available from `AP_INVOICES_UTILITY_PKG.GET_APPROVAL_STATUS(...)`, not a
+column. `POSTING_STATUS` is similarly unreliable (mostly NULL); real posting
+state is `AP_INVOICES_UTILITY_PKG.GET_POSTING_STATUS(invoice_id)` /
+`ap_invoice_distributions_all.posted_flag`. Only `payment_status_flag` (Y/N/P)
+and `wfapproval_status` are trustworthy stored columns. Most real invoices on
+this instance are already validated + posted + paid, i.e. already locked down
+for anything financial - so a general in-place amount/terms editor would
+mostly 40x anyway. There is no public/documented API package for invoice
+update (`AP_INVOICES_PKG.UPDATE_ROW` exists but is a raw 154-argument Forms
+table handler, not a supported business API). `AP_CANCEL_PKG` (cancel) *is* a
+real, purpose-built package - hence cancel-and-recreate is the recommended
+pattern for anything this endpoint rejects.
+
+---
+
+## POST /invoices/:id/cancel
+
+The supported path for anything `PATCH /invoices/:id` rejects (amount/terms/
+lines on an invoice that may be validated/posted/paid). Uses Oracle's own
+`AP_CANCEL_PKG` - not direct SQL - via `IS_INVOICE_CANCELLABLE` (pre-check)
+then `AP_CANCEL_SINGLE_INVOICE` (the real cancel). Synchronous, no Open
+Interface, no concurrent program.
+
+**This is not reversible.** Oracle has no "un-cancel". A successful cancel
+zeroes `invoice_amount` and stamps `cancelled_amount`/`cancelled_date`
+permanently. The follow-up corrected invoice is a separate `POST /invoices`
+call - this endpoint only cancels, it never creates a replacement.
+
+```bash
+curl -X POST $BASE_URL/invoices/191133/cancel \
+  -H "X-Client-Secret: $CLIENT_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{ "accounting_date": "2016-12-15" }'
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `accounting_date` | no | `YYYY-MM-DD`. **Must fall in an open GL period for the invoice's ledger** - defaults to today if omitted, which fails on most Vision demo orgs since their ledgers only have periods open years in the past (e.g. org 1017 "Vision Italy" only through Dec 2010; org 458 "Vision Services" through Dec 2016). Check `gl_period_statuses` for the real org before assuming today works. |
+
+Returns the invoice (same shape as `GET /invoices/:id`) plus:
+
+```json
+{
+  "invoice_amount": 0,
+  "cancelled": true,
+  "cancelled_amount": 100,
+  "cancelled_date": "2026-07-20"
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `404` | invoice_id does not exist |
+| `409` | invoice is already cancelled |
+| `422` | Oracle says not cancellable (`details` has the real reason from `IS_INVOICE_CANCELLABLE`'s `debug_info` - `error_code` is frequently null even on failure, confirmed live, so this endpoint falls back to `debug_info` for something actionable), OR the cancel call itself failed (`details` has `AP_CANCEL_SINGLE_INVOICE`'s message, OR - confirmed live against a real invoice - a raw unhandled Oracle exception like `ORA-20001: ... Error encountered while synchronizing tax distributions ... Generate APLIST for this invoice and log a Service Request`, which is a genuine Oracle-side data/tax-engine issue with that specific invoice, not fixable from this API) |
+
+### Gotchas (found the hard way, against a real instance)
+
+- `IS_INVOICE_CANCELLABLE` requires the same Apps session context
+  (`FND_GLOBAL.APPS_INITIALIZE` + `MO_GLOBAL.SET_POLICY_CONTEXT`) as the
+  actual cancel call. Without it, it fails closed and reports **every**
+  invoice as not cancellable with a generic reason, regardless of the
+  invoice's real state - confirmed live on this instance.
+- Some orgs' invoices (e.g. org 1017 "Vision Italy") hit a real Oracle
+  e-Business Tax engine bug during cancellation (`ORA-20001` tax
+  distribution sync failure) - consistent with this instance's already-known
+  tax engine issues (see `POST /invoices` gotchas). Not every cancellable
+  invoice can actually be cancelled; try a different org/invoice if you hit
+  this.
+- `accounting_date` must be a plain `YYYY-MM-DD` string. If you're building
+  the request body in a low-code tool (e.g. Make), watch out for `date`-typed
+  fields handing over a full ISO timestamp (`2016-12-15T00:00:00.000Z`)
+  instead - format/truncate it before sending.
 
 ---
 

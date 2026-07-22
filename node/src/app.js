@@ -19,7 +19,15 @@ const invoicesRouter = require('./routes/invoices');
 function createApp(config, logger) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' }));
+  // type: () => true - parse every request body as JSON regardless of the
+  // Content-Type header. Every write endpoint here (POST/PATCH /invoices)
+  // only ever accepts JSON, but not every calling platform reliably sets
+  // Content-Type: application/json (confirmed live: Make's HTTP connector
+  // sent a PATCH with a valid JSON body but no Content-Type header at all,
+  // defaulting elsewhere to application/x-www-form-urlencoded - express.json()
+  // silently skipped parsing and req.body came through as {}, producing a
+  // confusing "no fields provided" 400 despite a correct payload on the wire).
+  app.use(express.json({ limit: '1mb', type: () => true }));
 
   // One tidy line per request: method, path, status, duration. No headers logged.
   app.use(requestLogger(logger));

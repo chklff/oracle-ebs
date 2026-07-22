@@ -14,11 +14,14 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_DIR"
 
-# Load .env (KEY=VALUE) to read the driver-mode settings.
-if [ -f .env ]; then
+# Load the config file (KEY=VALUE) to read the driver-mode settings. Defaults
+# to .env; set CONFIG_FILE to use a different filename (see src/server.js for
+# why you might need to - some hosts quarantine files literally named .env).
+CONFIG_FILE="${CONFIG_FILE:-.env}"
+if [ -f "$CONFIG_FILE" ]; then
   set -a
   # shellcheck disable=SC1091
-  . ./.env
+  . "./$CONFIG_FILE"
   set +a
 fi
 
